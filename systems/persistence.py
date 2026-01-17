@@ -6,31 +6,24 @@ from config import SAVE_FILE, EPSILON_START
 
 
 def get_save_path() -> str:
-    """Get the full path to the save file."""
-    # Save in the same directory as the game
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_dir, SAVE_FILE)
 
 
-def save_game(agent, q_agent, current_floor: int) -> bool:
-    """Save game state to file.
-
-    Args:
-        agent: The player's agent
-        q_agent: The Q-learning agent
-        current_floor: Current floor number
-
-    Returns:
-        True if save was successful
-    """
+def save_game(agent, q_agent, current_floor: int, extra_data: dict = None) -> bool:
+    """Save game state to file."""
     try:
         save_data = {
-            'version': 1,
+            'version': 2,
             'agent_stats': agent.get_stats_dict(),
             'q_table': q_agent.get_q_table_dict(),
             'epsilon': q_agent.epsilon,
             'current_floor': current_floor
         }
+
+        # Add extra data if provided
+        if extra_data:
+            save_data.update(extra_data)
 
         save_path = get_save_path()
         with open(save_path, 'w') as f:
@@ -44,15 +37,7 @@ def save_game(agent, q_agent, current_floor: int) -> bool:
 
 
 def load_game(agent, q_agent) -> dict:
-    """Load game state from file.
-
-    Args:
-        agent: The player's agent to load stats into
-        q_agent: The Q-learning agent to load Q-table into
-
-    Returns:
-        dict with loaded data, or None if no save exists
-    """
+    """Load game state from file."""
     save_path = get_save_path()
 
     if not os.path.exists(save_path):
@@ -62,11 +47,7 @@ def load_game(agent, q_agent) -> dict:
         with open(save_path, 'r') as f:
             save_data = json.load(f)
 
-        # Validate version
-        version = save_data.get('version', 0)
-        if version != 1:
-            print(f"Unknown save version: {version}")
-            return None
+        version = save_data.get('version', 1)
 
         # Load agent stats
         if 'agent_stats' in save_data:
@@ -74,13 +55,28 @@ def load_game(agent, q_agent) -> dict:
 
         # Load Q-table
         if 'q_table' in save_data:
-            q_agent.load_q_table_dict(save_data['q_table'])
+            q_table_data = save_data['q_table']
+            # Handle both old and new format
+            if isinstance(q_table_data, dict):
+                if 'combat' in q_table_data:
+                    # New format with contexts
+                    q_agent.load_q_table_dict(q_table_data)
+                else:
+                    # Old format - treat as combat only
+                    q_agent.combat_q = {}
+                    for key, value in q_table_data.items():
+                        parts = key.rsplit(':', 1)
+                        state_str = parts[0].strip('()')
+                        action = int(parts[1])
+                        state = tuple(int(x.strip()) for x in state_str.split(','))
+                        q_agent.combat_q[(state, action)] = value
 
         # Load epsilon
         q_agent.epsilon = save_data.get('epsilon', EPSILON_START)
 
         return {
-            'current_floor': save_data.get('current_floor', 1)
+            'current_floor': save_data.get('current_floor', 1),
+            'equipment': save_data.get('equipment')
         }
 
     except Exception as e:
@@ -89,16 +85,9 @@ def load_game(agent, q_agent) -> dict:
 
 
 def delete_save() -> bool:
-    """Delete the save file.
-
-    Returns:
-        True if deletion was successful or file didn't exist
-    """
     save_path = get_save_path()
-
     if not os.path.exists(save_path):
         return True
-
     try:
         os.remove(save_path)
         return True
@@ -108,5 +97,4 @@ def delete_save() -> bool:
 
 
 def save_exists() -> bool:
-    """Check if a save file exists."""
     return os.path.exists(get_save_path())
