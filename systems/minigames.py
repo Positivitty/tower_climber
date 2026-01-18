@@ -368,10 +368,10 @@ class PatternGame(MiniGame):
         super().__init__(stat, difficulty)
         self.game_type = "timing_bar"  # Use timing bar for consistency
 
-        # Same as timing bar but with different visuals
+        # Slower bar for intelligence - requires more patience
         self.bar_position = 0.0
         self.bar_direction = 1
-        self.bar_speed = 0.015 + difficulty * 0.005
+        self.bar_speed = 0.008 + difficulty * 0.002  # Much slower than strength
 
         target_width = max(0.1, 0.18 - difficulty * 0.02)
         self.target_start = random.uniform(0.25, 0.75 - target_width)

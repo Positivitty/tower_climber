@@ -4,7 +4,7 @@ import random
 from config import (
     BASE_ALPHA, GAMMA, EPSILON_START, EPSILON_MIN, EPSILON_DECAY,
     COMBAT_ACTIONS, BASE_ACTIONS, MINIGAME_ACTIONS,
-    ACTION_ATTACK, ACTION_RUN, ACTION_START_CLIMB,
+    ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_TRAIN_STRENGTH, ACTION_TRAIN_INTELLIGENCE,
     ACTION_TRAIN_AGILITY, ACTION_TRAIN_DEFENSE, ACTION_TRAIN_LUCK,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
@@ -165,6 +165,8 @@ class QLearningAgent:
                 return "ATTACK"
             elif action == ACTION_RUN:
                 return "RUN"
+            elif action == ACTION_CHARGE:
+                return "CHARGE"
         elif context == 'base':
             names = {
                 ACTION_TRAIN_STRENGTH: "TRAIN STRENGTH",

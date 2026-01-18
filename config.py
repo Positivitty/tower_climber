@@ -25,13 +25,15 @@ KNOCKBACK_FORCE = 8
 ATTACK_RANGE = 50
 ATTACK_COOLDOWN_FRAMES = 30  # 0.5 seconds at 60 FPS
 MELEE_DAMAGE = 10
-RANGED_DAMAGE = 8
-PROJECTILE_SPEED = 6
+RANGED_DAMAGE = 6  # Reduced from 8
+PROJECTILE_SPEED = 4  # Reduced from 6 to make dodging easier
 
 # Movement speeds
 AGENT_SPEED = 3
+AGENT_CHARGE_SPEED = 6  # Speed when charging
 ENEMY_MELEE_SPEED = 2
 ENEMY_RANGED_SPEED = 1.5
+ENEMY_RANGED_RETREAT_SPEED = 0.8  # Slower when backing up
 
 # Agent defaults
 AGENT_MAX_HP = 100
@@ -59,7 +61,8 @@ REWARD_MINIGAME_PERFECT = 20
 # Combat Actions
 ACTION_ATTACK = 0
 ACTION_RUN = 1
-COMBAT_ACTIONS = [ACTION_ATTACK, ACTION_RUN]
+ACTION_CHARGE = 2  # Rush toward enemy, closing distance quickly
+COMBAT_ACTIONS = [ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE]
 
 # Base Actions (what to do at base)
 ACTION_TRAIN_STRENGTH = 0
@@ -121,8 +124,10 @@ STATE_GAME_OVER = 'game_over'
 STATE_TRAINING = 'training'
 
 # Mini-game settings
-MINIGAME_DURATION_FRAMES = 180  # 3 seconds at 60 FPS
+MINIGAME_DURATION_FRAMES = 300  # 5 seconds at 60 FPS (longer to watch)
 MINIGAME_TARGET_WIDTH = 40  # Width of target zone in timing bar
+MINIGAME_RESULT_DISPLAY_FRAMES = 120  # 2 seconds to show result
+MINIGAME_AI_DECISION_DELAY = 15  # Frames between AI decisions in minigames
 
 # AI Dialogue
 AI_THINK_DELAY_FRAMES = 30  # Pause between AI thoughts

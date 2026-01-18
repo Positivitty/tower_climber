@@ -8,8 +8,8 @@ from systems.physics import PhysicsBody
 from config import (
     GROUND_Y, ENEMY_MELEE_HP, ENEMY_RANGED_HP,
     MELEE_DAMAGE, RANGED_DAMAGE, ENEMY_MELEE_SPEED, ENEMY_RANGED_SPEED,
-    ENEMY_RANGED_PREFERRED_DISTANCE, ATTACK_COOLDOWN_FRAMES, ATTACK_RANGE,
-    COLOR_RED
+    ENEMY_RANGED_PREFERRED_DISTANCE, ENEMY_RANGED_RETREAT_SPEED,
+    ATTACK_COOLDOWN_FRAMES, ATTACK_RANGE, COLOR_RED
 )
 
 
@@ -124,8 +124,8 @@ class RangedEnemy(Enemy):
 
         # Try to maintain preferred distance
         if distance < self.preferred_distance - 20:
-            # Too close - back away
-            self.vx = -direction * self.speed
+            # Too close - back away (but slowly!)
+            self.vx = -direction * ENEMY_RANGED_RETREAT_SPEED
         elif distance > self.preferred_distance + 20:
             # Too far - move closer
             self.vx = direction * self.speed

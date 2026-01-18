@@ -4,10 +4,11 @@ import pygame
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, DECISION_TICK_FRAMES,
     STATE_BASE, STATE_COMBAT, STATE_POST_FLOOR, STATE_TRAINING,
-    ACTION_ATTACK, ACTION_RUN, ACTION_START_CLIMB,
+    ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
-    ATTACK_RANGE, AI_THINK_DELAY_FRAMES,
-    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, GROUND_Y
+    ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
+    MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
+    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, GROUND_Y
 )
 from entities.agent import Agent
 from entities.enemy import MeleeEnemy, RangedEnemy
@@ -28,6 +29,9 @@ from ui.renderer import Renderer
 # Game states
 STATE_CHAR_CREATE = 'char_create'
 STATE_LOOT = 'loot'
+STATE_TRAIN_SELECT = 'train_select'  # Player picks which stat to train
+STATE_EQUIPMENT = 'equipment'  # Player manages equipment
+STATE_AI_PRIORITY = 'ai_priority'  # Player sets AI combat priority
 
 
 class Game:
@@ -80,6 +84,19 @@ class Game:
         self.minigame_stat = None
         self.minigame_state = None
         self.base_state = None
+        self.minigame_result_timer = 0  # Timer to display result
+        self.minigame_ai_delay = 0  # Delay between AI decisions in minigames
+
+        # Player menu state
+        self.base_menu_selection = 0  # Which base option is selected
+        self.train_menu_selection = 0  # Which stat is selected
+        self.equipment_menu_selection = 0  # Which slot is selected
+        self.equipment_submenu = False  # Are we in inventory view?
+        self.inventory_selection = 0  # Which inventory item is selected
+
+        # AI priority (player can guide the AI)
+        self.ai_priority = 'balanced'  # 'aggressive', 'defensive', 'balanced'
+        self.priority_selection = 1  # Menu selection (0=aggressive, 1=balanced, 2=defensive)
 
         # Check for existing save
         if save_exists():
@@ -160,6 +177,8 @@ class Game:
         self.current_minigame = create_minigame(stat, difficulty)
         self.minigame_stat = stat
         self.minigame_state = None
+        self.minigame_result_timer = 0
+        self.minigame_ai_delay = 0
         self.state = STATE_TRAINING
         self.ai_dialogue.think_about_training(stat, difficulty)
 
@@ -178,50 +197,44 @@ class Game:
                     self.agent.start_attack()
         elif action == ACTION_RUN:
             self.agent.move_away_from(nearest.x)
+        elif action == ACTION_CHARGE:
+            # Rush toward enemy at double speed
+            distance = self.agent.distance_to(nearest)
+            if distance > ATTACK_RANGE:
+                direction = 1 if nearest.x > self.agent.x else -1
+                self.agent.vx = direction * AGENT_CHARGE_SPEED
+                self.agent.facing = direction
+            else:
+                # In range - attack
+                self.agent.vx = 0
+                if self.agent.can_attack():
+                    self.agent.start_attack()
 
     def _update_char_create(self):
         pass  # Handled by events
 
     def _update_base(self):
-        self.ai_think_counter += 1
-        if self.ai_think_counter >= AI_THINK_DELAY_FRAMES:
-            self.ai_think_counter = 0
-            self.base_state = self._get_base_state()
-            action = self.q_agent.choose_action(self.base_state, context='base')
-            action_name = QLearningAgent.get_action_name(action, 'base')
-            self.ai_dialogue.add_thought(f"Decision: {action_name}")
-
-            if action == ACTION_START_CLIMB:
-                self.q_agent.learn(self.base_state, action, 0, self.base_state, context='base', done=True)
-                self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
-                self.agent.start_new_climb()
-                self._start_floor()
-            else:
-                stat = QLearningAgent.action_to_stat(action)
-                if stat:
-                    self._start_training(stat)
+        # Base is now a player-controlled menu, no automatic AI decisions
+        pass  # Handled by events
 
     def _update_training(self):
         if self.current_minigame is None:
             self.state = STATE_BASE
             return
 
-        mg_state = self.current_minigame.get_state()
+        # If showing result, count down timer
+        if self.minigame_result_timer > 0:
+            self.minigame_result_timer -= 1
+            if self.minigame_result_timer <= 0:
+                # Done showing result, go back to base
+                self.current_minigame = None
+                self.minigame_stat = None
+                self.state = STATE_BASE
+                self._save_game()
+                self.ai_dialogue.think_about_base(self.agent, self.q_agent.epsilon)
+            return
 
-        if self.minigame_state != mg_state:
-            action = self.q_agent.choose_action(mg_state, context='minigame')
-            reward = self.current_minigame.update(action)
-
-            if self.minigame_state is not None:
-                self.q_agent.learn(
-                    self.minigame_state, self.q_agent.last_action, reward,
-                    mg_state, context='minigame',
-                    done=self.current_minigame.is_finished()
-                )
-            self.minigame_state = mg_state
-        else:
-            self.current_minigame.update(ACTION_MINIGAME_WAIT)
-
+        # Check if minigame just finished
         if self.current_minigame.is_finished():
             success = self.current_minigame.success
             message = self.current_minigame.result_message
@@ -238,11 +251,31 @@ class Game:
             self.q_agent.learn(self.base_state, self.q_agent.last_action, reward,
                                new_base_state, context='base', done=False)
 
-            self.current_minigame = None
-            self.minigame_stat = None
-            self.state = STATE_BASE
-            self._save_game()
-            self.ai_dialogue.think_about_base(self.agent, self.q_agent.epsilon)
+            # Start result display timer
+            self.minigame_result_timer = MINIGAME_RESULT_DISPLAY_FRAMES
+            return
+
+        # AI decision delay - don't decide every frame
+        self.minigame_ai_delay -= 1
+        if self.minigame_ai_delay > 0:
+            # Still waiting, just update the minigame with WAIT
+            self.current_minigame.update(ACTION_MINIGAME_WAIT)
+            return
+
+        # Time for AI to make a decision
+        self.minigame_ai_delay = MINIGAME_AI_DECISION_DELAY
+
+        mg_state = self.current_minigame.get_state()
+        action = self.q_agent.choose_action(mg_state, context='minigame')
+        reward = self.current_minigame.update(action)
+
+        if self.minigame_state is not None:
+            self.q_agent.learn(
+                self.minigame_state, self.q_agent.last_action, reward,
+                mg_state, context='minigame',
+                done=self.current_minigame.is_finished()
+            )
+        self.minigame_state = mg_state
 
     def _update_combat(self):
         self.agent.update()
@@ -276,7 +309,10 @@ class Game:
                                new_state, context='combat', done=done)
 
         self.combat_system.reset_tick_tracking()
-        action = self.q_agent.choose_action(new_state, context='combat')
+
+        # Apply AI priority bias to action selection
+        action = self._choose_action_with_priority(new_state)
+        self.q_agent.last_action = action  # Track for learning
         self._execute_combat_action(action)
 
         action_name = QLearningAgent.get_action_name(action, 'combat')
@@ -288,6 +324,38 @@ class Game:
             self.state_encoder.record_damage(self.combat_system.damage_taken_this_tick)
 
         self.current_state = new_state
+
+    def _choose_action_with_priority(self, state):
+        """Choose action with bias based on player-set AI priority."""
+        import random
+
+        # Get Q-values for all actions
+        q_values = self.q_agent.get_all_q_values(state, 'combat')
+
+        # If exploring, return random action
+        if random.random() < self.q_agent.epsilon:
+            return random.choice(list(q_values.keys()))
+
+        # Apply priority biases
+        hp_ratio = self.agent.hp / self.agent.max_hp
+
+        if self.ai_priority == 'aggressive':
+            # Prefer ATTACK and CHARGE
+            q_values[ACTION_ATTACK] += 5
+            q_values[ACTION_CHARGE] += 8  # Extra bias for closing distance
+            q_values[ACTION_RUN] -= 3
+        elif self.ai_priority == 'defensive':
+            # Run more when HP is low
+            if hp_ratio < 0.5:
+                q_values[ACTION_RUN] += 10
+                q_values[ACTION_ATTACK] -= 5
+            elif hp_ratio < 0.75:
+                q_values[ACTION_RUN] += 3
+        # 'balanced' - no bias, use pure Q-values
+
+        # Choose action with highest (biased) Q-value
+        best_action = max(q_values.keys(), key=lambda a: q_values[a])
+        return best_action
 
     def _end_floor(self, floor_cleared: bool):
         if self.current_state is not None:
@@ -332,8 +400,7 @@ class Game:
                 elif self.state == STATE_POST_FLOOR:
                     self._handle_post_floor_input(event.key)
                 elif self.state == STATE_BASE:
-                    if event.key == pygame.K_SPACE:
-                        self.ai_think_counter = AI_THINK_DELAY_FRAMES - 1
+                    self._handle_base_input(event.key)
                 elif self.state == STATE_COMBAT:
                     if event.key == pygame.K_ESCAPE:
                         self._end_floor(floor_cleared=False)
@@ -341,6 +408,12 @@ class Game:
                     if event.key == pygame.K_ESCAPE:
                         self.current_minigame = None
                         self.state = STATE_BASE
+                elif self.state == STATE_TRAIN_SELECT:
+                    self._handle_train_select_input(event.key)
+                elif self.state == STATE_EQUIPMENT:
+                    self._handle_equipment_input(event.key)
+                elif self.state == STATE_AI_PRIORITY:
+                    self._handle_priority_input(event.key)
 
     def _handle_char_create_input(self, key):
         if key == pygame.K_UP:
@@ -353,6 +426,95 @@ class Game:
             self.selected_class = (self.selected_class + 1) % len(self.class_list)
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
             self._create_character()
+
+    def _handle_base_input(self, key):
+        # Arrow key navigation
+        if key == pygame.K_UP:
+            self.base_menu_selection = (self.base_menu_selection - 1) % 4
+        elif key == pygame.K_DOWN:
+            self.base_menu_selection = (self.base_menu_selection + 1) % 4
+        elif key in (pygame.K_RETURN, pygame.K_SPACE):
+            # Execute selected option
+            if self.base_menu_selection == 0:
+                self.state = STATE_TRAIN_SELECT
+            elif self.base_menu_selection == 1:
+                self.state = STATE_EQUIPMENT
+                self.equipment_submenu = False
+                self.equipment_menu_selection = 0
+            elif self.base_menu_selection == 2:
+                self.state = STATE_AI_PRIORITY
+            elif self.base_menu_selection == 3:
+                self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
+                self.agent.start_new_climb()
+                self._start_floor()
+        # Also support number keys for quick access
+        elif key == pygame.K_1:
+            self.state = STATE_TRAIN_SELECT
+        elif key == pygame.K_2:
+            self.state = STATE_EQUIPMENT
+            self.equipment_submenu = False
+            self.equipment_menu_selection = 0
+        elif key == pygame.K_3:
+            self.state = STATE_AI_PRIORITY
+        elif key == pygame.K_4:
+            self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
+            self.agent.start_new_climb()
+            self._start_floor()
+
+    def _handle_train_select_input(self, key):
+        stats = ['strength', 'intelligence', 'agility', 'defense', 'luck']
+        if key == pygame.K_UP:
+            self.train_menu_selection = (self.train_menu_selection - 1) % len(stats)
+        elif key == pygame.K_DOWN:
+            self.train_menu_selection = (self.train_menu_selection + 1) % len(stats)
+        elif key in (pygame.K_RETURN, pygame.K_SPACE):
+            stat = stats[self.train_menu_selection]
+            self._start_training(stat)
+        elif key == pygame.K_ESCAPE:
+            self.state = STATE_BASE
+
+    def _handle_equipment_input(self, key):
+        if not self.equipment_submenu:
+            # Equipped items view
+            slots = ['weapon', 'armor', 'accessory']
+            if key == pygame.K_UP:
+                self.equipment_menu_selection = (self.equipment_menu_selection - 1) % len(slots)
+            elif key == pygame.K_DOWN:
+                self.equipment_menu_selection = (self.equipment_menu_selection + 1) % len(slots)
+            elif key in (pygame.K_RETURN, pygame.K_SPACE):
+                self.equipment_submenu = True
+                self.inventory_selection = 0
+            elif key == pygame.K_ESCAPE:
+                self.state = STATE_BASE
+        else:
+            # Inventory view
+            inv_len = len(self.agent.equipment.inventory)
+            if key == pygame.K_UP and inv_len > 0:
+                self.inventory_selection = (self.inventory_selection - 1) % inv_len
+            elif key == pygame.K_DOWN and inv_len > 0:
+                self.inventory_selection = (self.inventory_selection + 1) % inv_len
+            elif key in (pygame.K_RETURN, pygame.K_SPACE) and inv_len > 0:
+                # Equip selected item
+                item = self.agent.equipment.inventory[self.inventory_selection]
+                self.agent.equipment.equip(item)
+                self.ai_dialogue.add_thought(f"Equipped: {item.name}")
+                self.inventory_selection = 0
+                self._save_game()
+            elif key == pygame.K_ESCAPE:
+                self.equipment_submenu = False
+
+    def _handle_priority_input(self, key):
+        priorities = ['aggressive', 'balanced', 'defensive']
+        if key == pygame.K_UP:
+            self.priority_selection = (self.priority_selection - 1) % len(priorities)
+        elif key == pygame.K_DOWN:
+            self.priority_selection = (self.priority_selection + 1) % len(priorities)
+        elif key in (pygame.K_RETURN, pygame.K_SPACE):
+            self.ai_priority = priorities[self.priority_selection]
+            self.ai_dialogue.add_thought(f"AI strategy set to: {self.ai_priority.upper()}")
+            self.state = STATE_BASE
+        elif key == pygame.K_ESCAPE:
+            self.state = STATE_BASE
 
     def _handle_post_floor_input(self, key):
         if key == pygame.K_UP or key == pygame.K_DOWN:
@@ -384,6 +546,12 @@ class Game:
             self._update_training()
         elif self.state == STATE_POST_FLOOR:
             self._update_post_floor()
+        elif self.state == STATE_TRAIN_SELECT:
+            pass  # Handled by events
+        elif self.state == STATE_EQUIPMENT:
+            pass  # Handled by events
+        elif self.state == STATE_AI_PRIORITY:
+            pass  # Handled by events
 
     def _render(self):
         self.renderer.clear()
@@ -398,6 +566,12 @@ class Game:
             self._render_training()
         elif self.state == STATE_POST_FLOOR:
             self._render_post_floor()
+        elif self.state == STATE_TRAIN_SELECT:
+            self._render_train_select()
+        elif self.state == STATE_EQUIPMENT:
+            self._render_equipment()
+        elif self.state == STATE_AI_PRIORITY:
+            self._render_ai_priority()
 
         # Always draw dialogue box
         self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
@@ -441,6 +615,7 @@ class Game:
         class_name = CLASSES[self.agent.char_class]['name']
         self.renderer.draw_text(f"{race_name} {class_name}", SCREEN_WIDTH // 2, 75, COLOR_WHITE, 'small', center=True)
 
+        # Draw agent in center
         self.agent.x = SCREEN_WIDTH // 2
         self.agent.y = GROUND_Y - 100
         self.renderer.draw_ground()
@@ -449,7 +624,7 @@ class Game:
         self.renderer.draw_agent_stats_compact(self.agent)
         self.renderer.draw_floor_info(self.current_floor)
 
-        # Equipment display
+        # Equipment display on left
         y = 120
         self.renderer.draw_text("Equipment:", 10, y, COLOR_YELLOW, 'small')
         for slot in ['weapon', 'armor', 'accessory']:
@@ -460,7 +635,16 @@ class Game:
             else:
                 self.renderer.draw_text(f"  {slot}: (empty)", 10, y, COLOR_WHITE, 'small')
 
-        self.renderer.draw_text("AI is deciding... (SPACE to speed up)", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+        # Base menu options
+        menu_y = 240
+        options = ["Train Stats", "Equipment", "AI Strategy", "Start Climb"]
+        self.renderer.draw_text("What would you like to do?", SCREEN_WIDTH // 2, menu_y, COLOR_WHITE, 'medium', center=True)
+        for i, label in enumerate(options):
+            color = COLOR_YELLOW if i == self.base_menu_selection else COLOR_GREEN
+            prefix = "> " if i == self.base_menu_selection else "  "
+            self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 30 + i * 25, color, 'small', center=True)
+
+        self.renderer.draw_text(f"AI Priority: {self.ai_priority.upper()}", SCREEN_WIDTH // 2, 370, COLOR_CYAN, 'small', center=True)
 
     def _render_combat(self):
         self.renderer.draw_ground()
@@ -479,7 +663,13 @@ class Game:
             data = self.current_minigame.get_visual_data()
             game_type = data.get('type', 'timing_bar')
 
-            if game_type == 'timing_bar':
+            # Show result screen if finished
+            if data.get('finished') and self.minigame_result_timer > 0:
+                result_color = COLOR_GREEN if data.get('success') else COLOR_RED
+                result_text = "SUCCESS!" if data.get('success') else "FAILED!"
+                self.renderer.draw_text(result_text, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 60, result_color, 'large', center=True)
+                self.renderer.draw_text(self.current_minigame.result_message, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, COLOR_WHITE, 'medium', center=True)
+            elif game_type == 'timing_bar':
                 self.renderer.draw_timing_bar(
                     data['progress'], data['target_start'], data['target_end'], data.get('success')
                 )
@@ -539,6 +729,100 @@ class Game:
             self.renderer.draw_text(f"{prefix} {opt}", SCREEN_WIDTH // 2, options_y + i * 35, color, 'medium', center=True)
 
         self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+
+    def _render_train_select(self):
+        self.renderer.draw_text("TRAIN STATS", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
+        self.renderer.draw_text("Select a stat to train:", SCREEN_WIDTH // 2, 80, COLOR_WHITE, 'medium', center=True)
+
+        stats = ['strength', 'intelligence', 'agility', 'defense', 'luck']
+        stat_descriptions = {
+            'strength': 'Increases damage dealt',
+            'intelligence': 'Improves learning rate',
+            'agility': 'Increases speed and dodge',
+            'defense': 'Reduces damage taken',
+            'luck': 'Improves crits and drops'
+        }
+
+        y = 130
+        for i, stat in enumerate(stats):
+            current_val = self.agent.get_stat(stat)
+            color = COLOR_YELLOW if i == self.train_menu_selection else COLOR_WHITE
+            prefix = ">" if i == self.train_menu_selection else " "
+            self.renderer.draw_text(f"{prefix} {stat.upper()}: {current_val}", SCREEN_WIDTH // 2 - 80, y, color, 'medium')
+            if i == self.train_menu_selection:
+                self.renderer.draw_text(stat_descriptions[stat], SCREEN_WIDTH // 2, y + 22, COLOR_GREEN, 'small', center=True)
+            y += 45 if i == self.train_menu_selection else 30
+
+        self.renderer.draw_text("UP/DOWN to select, ENTER to train, ESC to go back", SCREEN_WIDTH // 2, 350, COLOR_WHITE, 'small', center=True)
+        self.renderer.draw_agent_stats_compact(self.agent)
+
+    def _render_equipment(self):
+        self.renderer.draw_text("EQUIPMENT", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
+
+        if not self.equipment_submenu:
+            # Show equipped items
+            self.renderer.draw_text("Equipped Items:", SCREEN_WIDTH // 2, 80, COLOR_WHITE, 'medium', center=True)
+            slots = ['weapon', 'armor', 'accessory']
+            y = 120
+            for i, slot in enumerate(slots):
+                item = self.agent.equipment.get_equipped_item(slot)
+                color = COLOR_YELLOW if i == self.equipment_menu_selection else COLOR_WHITE
+                prefix = ">" if i == self.equipment_menu_selection else " "
+                if item:
+                    self.renderer.draw_text(f"{prefix} {slot.upper()}: {item.name}", SCREEN_WIDTH // 2, y, color, 'small', center=True)
+                    if i == self.equipment_menu_selection:
+                        stat_str = ', '.join(f"+{v} {k[:3].upper()}" for k, v in item.stats.items())
+                        self.renderer.draw_text(f"  ({item.rarity}) {stat_str}", SCREEN_WIDTH // 2, y + 18, item.get_color(), 'small', center=True)
+                else:
+                    self.renderer.draw_text(f"{prefix} {slot.upper()}: (empty)", SCREEN_WIDTH // 2, y, color, 'small', center=True)
+                y += 50 if i == self.equipment_menu_selection and item else 30
+
+            # Show inventory count
+            inv_count = len(self.agent.equipment.inventory)
+            self.renderer.draw_text(f"Inventory: {inv_count} items", SCREEN_WIDTH // 2, 280, COLOR_WHITE, 'small', center=True)
+            self.renderer.draw_text("ENTER to view inventory, ESC to go back", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+        else:
+            # Show inventory
+            self.renderer.draw_text("Inventory:", SCREEN_WIDTH // 2, 80, COLOR_WHITE, 'medium', center=True)
+            if not self.agent.equipment.inventory:
+                self.renderer.draw_text("(empty)", SCREEN_WIDTH // 2, 120, COLOR_WHITE, 'small', center=True)
+            else:
+                y = 110
+                for i, item in enumerate(self.agent.equipment.inventory[:6]):  # Show max 6
+                    color = COLOR_YELLOW if i == self.inventory_selection else COLOR_WHITE
+                    prefix = ">" if i == self.inventory_selection else " "
+                    self.renderer.draw_text(f"{prefix} {item.name}", SCREEN_WIDTH // 2, y, color, 'small', center=True)
+                    if i == self.inventory_selection:
+                        stat_str = ', '.join(f"+{v} {k[:3].upper()}" for k, v in item.stats.items())
+                        self.renderer.draw_text(f"  ({item.rarity}) {stat_str}", SCREEN_WIDTH // 2, y + 18, item.get_color(), 'small', center=True)
+                    y += 40 if i == self.inventory_selection else 25
+            self.renderer.draw_text("ENTER to equip, ESC to go back", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+
+        self.renderer.draw_agent_stats_compact(self.agent)
+
+    def _render_ai_priority(self):
+        self.renderer.draw_text("AI COMBAT STRATEGY", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
+        self.renderer.draw_text("Choose how the AI should fight:", SCREEN_WIDTH // 2, 80, COLOR_WHITE, 'medium', center=True)
+
+        priorities = [
+            ('aggressive', 'AGGRESSIVE', 'Focus on attacking. Close distance quickly.'),
+            ('balanced', 'BALANCED', 'Mix of attack and defense. Adapt to situation.'),
+            ('defensive', 'DEFENSIVE', 'Play safe. Run when HP is low.')
+        ]
+
+        y = 140
+        for i, (key, name, desc) in enumerate(priorities):
+            is_current = key == self.ai_priority
+            is_selected = i == self.priority_selection
+            color = COLOR_YELLOW if is_selected else (COLOR_GREEN if is_current else COLOR_WHITE)
+            prefix = ">" if is_selected else " "
+            suffix = " (current)" if is_current else ""
+            self.renderer.draw_text(f"{prefix} {name}{suffix}", SCREEN_WIDTH // 2, y, color, 'medium', center=True)
+            if is_selected:
+                self.renderer.draw_text(desc, SCREEN_WIDTH // 2, y + 25, COLOR_CYAN, 'small', center=True)
+            y += 60 if is_selected else 35
+
+        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm, ESC to go back", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
 
     def run(self):
         while self.running:
