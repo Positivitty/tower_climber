@@ -5,6 +5,7 @@ from config import (
     BASE_ALPHA, GAMMA, EPSILON_START, EPSILON_MIN, EPSILON_DECAY,
     COMBAT_ACTIONS, BASE_ACTIONS, MINIGAME_ACTIONS,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
+    ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
     ACTION_TRAIN_STRENGTH, ACTION_TRAIN_INTELLIGENCE,
     ACTION_TRAIN_AGILITY, ACTION_TRAIN_DEFENSE, ACTION_TRAIN_LUCK,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
@@ -300,8 +301,12 @@ class QLearningAgent:
     def get_action_name(action: int, context: str = 'combat') -> str:
         """Get human-readable action name."""
         if context == 'combat':
-            if action == ACTION_ATTACK:
-                return "ATTACK"
+            if action == ACTION_ATTACK_HIGH:
+                return "ATK HEAD"
+            elif action == ACTION_ATTACK_MID or action == ACTION_ATTACK:
+                return "ATK BODY"
+            elif action == ACTION_ATTACK_LOW:
+                return "ATK LEGS"
             elif action == ACTION_RUN:
                 return "RUN"
             elif action == ACTION_CHARGE:

@@ -5,11 +5,13 @@ from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, DECISION_TICK_FRAMES,
     STATE_BASE, STATE_COMBAT, STATE_POST_FLOOR, STATE_TRAINING,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
+    ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
     ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
     MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
     COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y
 )
+from systems.particles import ParticleSystem
 from entities.agent import Agent
 from entities.enemy import MeleeEnemy, RangedEnemy
 from ai.q_learning import QLearningAgent
@@ -66,7 +68,8 @@ class Game:
 
         # Initialize systems
         self.renderer = Renderer(self.screen)
-        self.combat_system = CombatSystem()
+        self.particle_system = ParticleSystem()
+        self.combat_system = CombatSystem(self.particle_system)
         self.training_system = TrainingSystem()
         self.state_encoder = StateEncoder()
 
@@ -170,6 +173,7 @@ class Game:
     def _start_floor(self):
         self.agent.reset_for_floor()
         self.combat_system.reset_for_floor()
+        self.particle_system.clear()
         self.state_encoder.reset()
         self.q_agent.reset_episode()
         self._spawn_enemies()
@@ -195,6 +199,11 @@ class Game:
         self.combat_system.spawn_agent_projectile(self.agent)
 
     def _execute_combat_action(self, action: int):
+        # Don't execute actions if stunned
+        if self.agent.is_stunned():
+            self.agent.vx = 0
+            return
+
         alive_enemies = [e for e in self.enemies if e.is_alive()]
         if not alive_enemies:
             return
@@ -203,7 +212,16 @@ class Game:
         # Ranged weapons have longer attack range
         attack_range = 200 if self.agent.has_ranged_weapon() else ATTACK_RANGE
 
-        if action == ACTION_ATTACK:
+        # Handle attack actions with height
+        if action in (ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW, ACTION_ATTACK):
+            # Set attack height based on action
+            if action == ACTION_ATTACK_HIGH:
+                self.agent.attack_height = 'high'
+            elif action == ACTION_ATTACK_LOW:
+                self.agent.attack_height = 'low'
+            else:  # ACTION_ATTACK_MID or ACTION_ATTACK
+                self.agent.attack_height = 'mid'
+
             distance = self.agent.distance_to(nearest)
             if distance > attack_range:
                 self.agent.move_toward(nearest.x)
@@ -222,7 +240,8 @@ class Game:
                 self.agent.vx = direction * AGENT_CHARGE_SPEED
                 self.agent.facing = direction
             else:
-                # In range - attack
+                # In range - attack (mid by default when charging)
+                self.agent.attack_height = 'mid'
                 self.agent.vx = 0
                 self.agent.facing = 1 if nearest.x > self.agent.x else -1
                 if self.agent.can_attack():
@@ -309,7 +328,19 @@ class Game:
 
         self.combat_system.process_enemy_attacks(self.agent, self.enemies)
         self.combat_system.update_projectiles(self.agent)
-        self.combat_system.update_agent_projectiles(self.enemies)
+        self.combat_system.update_agent_projectiles(self.enemies, self.agent)
+
+        # Update particle system
+        self.particle_system.update()
+
+        # Spawn stun stars if agent is stunned
+        if self.agent.is_stunned() and self.agent.stunned % 30 == 0:
+            self.particle_system.spawn_stun_stars(self.agent.x, self.agent.y)
+
+        # Spawn stun stars for stunned enemies
+        for enemy in self.enemies:
+            if enemy.is_alive() and enemy.is_stunned() and enemy.stunned % 30 == 0:
+                self.particle_system.spawn_stun_stars(enemy.x, enemy.y)
 
         self.decision_tick_counter += 1
         if self.decision_tick_counter >= DECISION_TICK_FRAMES:
@@ -370,18 +401,33 @@ class Game:
         # Apply priority biases
         hp_ratio = self.agent.hp / self.agent.max_hp
 
+        # Group attack actions for bias application
+        attack_actions = [ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW]
+
         if self.ai_priority == 'aggressive':
-            # Prefer ATTACK and CHARGE
-            q_values[ACTION_ATTACK] += 5
-            q_values[ACTION_CHARGE] += 8  # Extra bias for closing distance
-            q_values[ACTION_RUN] -= 3
+            # Prefer ATTACK and CHARGE, with bias toward head shots
+            for atk in attack_actions:
+                if atk in q_values:
+                    q_values[atk] += 5
+            if ACTION_ATTACK_HIGH in q_values:
+                q_values[ACTION_ATTACK_HIGH] += 3  # Extra bias for headshots
+            if ACTION_CHARGE in q_values:
+                q_values[ACTION_CHARGE] += 8  # Extra bias for closing distance
+            if ACTION_RUN in q_values:
+                q_values[ACTION_RUN] -= 3
         elif self.ai_priority == 'defensive':
-            # Run more when HP is low
+            # Run more when HP is low, prefer leg attacks to slow enemies
             if hp_ratio < 0.5:
-                q_values[ACTION_RUN] += 10
-                q_values[ACTION_ATTACK] -= 5
+                if ACTION_RUN in q_values:
+                    q_values[ACTION_RUN] += 10
+                for atk in attack_actions:
+                    if atk in q_values:
+                        q_values[atk] -= 5
             elif hp_ratio < 0.75:
-                q_values[ACTION_RUN] += 3
+                if ACTION_RUN in q_values:
+                    q_values[ACTION_RUN] += 3
+                if ACTION_ATTACK_LOW in q_values:
+                    q_values[ACTION_ATTACK_LOW] += 2  # Prefer leg attacks to slow enemies
         # 'balanced' - no bias, use pure Q-values
 
         # Choose action with highest (biased) Q-value
@@ -443,12 +489,21 @@ class Game:
                     elif event.key == pygame.K_t:
                         self.player_teaching = not self.player_teaching
                         if self.player_teaching:
-                            self.ai_dialogue.add_thought("Teaching mode ON - Press A/R/C to command")
+                            self.ai_dialogue.add_thought("Teaching mode ON - 1:High 2:Mid 3:Low R:Run C:Charge")
                         else:
                             self.ai_dialogue.add_thought("Teaching mode OFF - AI decides")
                     elif self.player_teaching:
-                        if event.key == pygame.K_a:
-                            self.player_action = ACTION_ATTACK
+                        if event.key == pygame.K_1:
+                            self.player_action = ACTION_ATTACK_HIGH
+                            self.ai_dialogue.add_thought("Player: ATTACK HIGH (head)!")
+                        elif event.key == pygame.K_2:
+                            self.player_action = ACTION_ATTACK_MID
+                            self.ai_dialogue.add_thought("Player: ATTACK MID (body)!")
+                        elif event.key == pygame.K_3:
+                            self.player_action = ACTION_ATTACK_LOW
+                            self.ai_dialogue.add_thought("Player: ATTACK LOW (legs)!")
+                        elif event.key == pygame.K_a:
+                            self.player_action = ACTION_ATTACK_MID
                             self.ai_dialogue.add_thought("Player: ATTACK!")
                         elif event.key == pygame.K_r:
                             self.player_action = ACTION_RUN
@@ -716,12 +771,22 @@ class Game:
             self.renderer.draw_enemy(enemy)
         self.renderer.draw_projectiles(self.combat_system.projectiles)
         self.renderer.draw_projectiles(self.combat_system.agent_projectiles, color=COLOR_CYAN)  # Agent arrows in cyan
+
+        # Render particles (blood, stun stars, etc.)
+        self.renderer.draw_particles(self.particle_system.particles)
+
         self.renderer.draw_floor_info(self.current_floor)
         self.renderer.draw_agent_stats_compact(self.agent)
 
+        # Show wound status for agent
+        wounds = [p for p, w in self.agent.wounds.items() if w]
+        if wounds:
+            wound_text = "Wounds: " + ", ".join(wounds)
+            self.renderer.draw_text(wound_text, SCREEN_WIDTH // 2, 35, COLOR_RED, 'small', center=True)
+
         # Show teaching mode hint
         if self.player_teaching:
-            self.renderer.draw_text("TEACHING MODE - A:Attack R:Run C:Charge", SCREEN_WIDTH // 2, 20, COLOR_YELLOW, 'small', center=True)
+            self.renderer.draw_text("TEACHING: 1:Head 2:Body 3:Legs R:Run C:Charge", SCREEN_WIDTH // 2, 20, COLOR_YELLOW, 'small', center=True)
         else:
             self.renderer.draw_text("Press T to teach AI", SCREEN_WIDTH // 2, 20, COLOR_WHITE, 'small', center=True)
 

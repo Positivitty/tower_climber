@@ -9,7 +9,9 @@ from config import (
     SCREEN_WIDTH, GROUND_Y, AGENT_SPEED, AGENT_MAX_HP,
     AGENT_BASE_STRENGTH, AGENT_BASE_INTELLIGENCE,
     AGENT_BASE_AGILITY, AGENT_BASE_DEFENSE, AGENT_BASE_LUCK,
-    ATTACK_COOLDOWN_FRAMES, SPRITE_AGENT_PRIMARY
+    ATTACK_COOLDOWN_FRAMES, SPRITE_AGENT_PRIMARY,
+    BODY_PART_HEAD, BODY_PART_BODY, BODY_PART_LEGS,
+    BODY_WOUND_DAMAGE_REDUCTION, LEGS_WOUND_SPEED_REDUCTION
 )
 
 
@@ -53,6 +55,15 @@ class Agent(PhysicsBody):
         self.facing = 1
         self.is_attacking = False
         self.attack_timer = 0
+        self.attack_height = 'mid'  # 'high', 'mid', 'low'
+
+        # Body part wounds
+        self.wounds = {
+            BODY_PART_HEAD: False,
+            BODY_PART_BODY: False,
+            BODY_PART_LEGS: False
+        }
+        self.stunned = 0  # Frames remaining stunned
 
         # Visual
         self.color = SPRITE_AGENT_PRIMARY
@@ -69,6 +80,10 @@ class Agent(PhysicsBody):
         """Calculate attack damage."""
         import random
         base_damage = self.get_total_stat('strength')
+
+        # Body wound reduces damage output
+        if self.wounds[BODY_PART_BODY]:
+            base_damage = int(base_damage * BODY_WOUND_DAMAGE_REDUCTION)
 
         # Crit check
         crit_chance = self.get_crit_chance()
@@ -89,7 +104,13 @@ class Agent(PhysicsBody):
     def get_speed(self) -> float:
         """Calculate movement speed."""
         agility = self.get_total_stat('agility')
-        return AGENT_SPEED + (agility - 5) * 0.1
+        speed = AGENT_SPEED + (agility - 5) * 0.1
+
+        # Leg wound reduces speed
+        if self.wounds[BODY_PART_LEGS]:
+            speed *= LEGS_WOUND_SPEED_REDUCTION
+
+        return speed
 
     def get_dodge_chance(self) -> float:
         """Calculate dodge chance from agility."""
@@ -174,6 +195,39 @@ class Agent(PhysicsBody):
         else:
             self.is_attacking = False
 
+        # Update stun timer
+        if self.stunned > 0:
+            self.stunned -= 1
+
+    def is_stunned(self) -> bool:
+        """Check if agent is currently stunned."""
+        return self.stunned > 0
+
+    def apply_stun(self, frames: int):
+        """Apply stun for given frames."""
+        self.stunned = max(self.stunned, frames)
+
+    def apply_wound(self, body_part: str):
+        """Apply a wound to a body part."""
+        import random
+        from config import HEAD_WOUND_STUN_CHANCE
+
+        self.wounds[body_part] = True
+
+        # Head wound can cause stun
+        if body_part == BODY_PART_HEAD:
+            if random.random() < HEAD_WOUND_STUN_CHANCE:
+                self.apply_stun(60)  # 1 second stun
+
+    def clear_wounds(self):
+        """Clear all wounds (for new floor/climb)."""
+        self.wounds = {
+            BODY_PART_HEAD: False,
+            BODY_PART_BODY: False,
+            BODY_PART_LEGS: False
+        }
+        self.stunned = 0
+
     def take_damage(self, amount: int) -> int:
         import random
 
@@ -206,6 +260,7 @@ class Agent(PhysicsBody):
         self.attack_cooldown = 0
         self.is_attacking = False
         self.attack_timer = 0
+        self.attack_height = 'mid'
         self.x = SCREEN_WIDTH // 4
         self.y = GROUND_Y
         self.vx = 0
@@ -222,6 +277,7 @@ class Agent(PhysicsBody):
         self.hp = self.max_hp
         self.undying_available = (self.race == 'undead')
         self.divine_heal_pending = False
+        self.clear_wounds()
         self.reset_for_floor()
 
     def end_floor(self, cleared: bool):

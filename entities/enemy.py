@@ -9,7 +9,9 @@ from config import (
     GROUND_Y, ENEMY_MELEE_HP, ENEMY_RANGED_HP,
     MELEE_DAMAGE, RANGED_DAMAGE, ENEMY_MELEE_SPEED, ENEMY_RANGED_SPEED,
     ENEMY_RANGED_PREFERRED_DISTANCE, ENEMY_RANGED_RETREAT_SPEED,
-    ATTACK_COOLDOWN_FRAMES, ATTACK_RANGE, COLOR_RED
+    ATTACK_COOLDOWN_FRAMES, ATTACK_RANGE, COLOR_RED,
+    BODY_PART_HEAD, BODY_PART_BODY, BODY_PART_LEGS,
+    HEAD_WOUND_STUN_CHANCE, BODY_WOUND_DAMAGE_REDUCTION, LEGS_WOUND_SPEED_REDUCTION
 )
 
 
@@ -31,13 +33,61 @@ class Enemy(PhysicsBody):
         self.facing = -1  # Default face left (toward player spawn)
         self.is_attacking = False
         self.attack_timer = 0
+        self.attack_height = 'mid'  # 'high', 'mid', 'low'
+
+        # Body part wounds
+        self.wounds = {
+            BODY_PART_HEAD: False,
+            BODY_PART_BODY: False,
+            BODY_PART_LEGS: False
+        }
+        self.stunned = 0  # Frames remaining stunned
 
         # Visual (enemies are red-tinted)
         self.color = COLOR_RED
 
     def can_attack(self) -> bool:
         """Check if enemy can attack."""
-        return self.attack_cooldown <= 0
+        return self.attack_cooldown <= 0 and not self.is_stunned()
+
+    def is_stunned(self) -> bool:
+        """Check if enemy is currently stunned."""
+        return self.stunned > 0
+
+    def apply_stun(self, frames: int):
+        """Apply stun for given frames."""
+        self.stunned = max(self.stunned, frames)
+
+    def apply_wound(self, body_part: str):
+        """Apply a wound to a body part."""
+        import random
+
+        self.wounds[body_part] = True
+
+        # Head wound can cause stun
+        if body_part == BODY_PART_HEAD:
+            if random.random() < HEAD_WOUND_STUN_CHANCE:
+                self.apply_stun(60)  # 1 second stun
+
+    def get_damage(self) -> int:
+        """Get attack damage, accounting for wounds."""
+        base_damage = self.damage
+
+        # Body wound reduces damage output
+        if self.wounds[BODY_PART_BODY]:
+            base_damage = int(base_damage * BODY_WOUND_DAMAGE_REDUCTION)
+
+        return base_damage
+
+    def get_speed(self) -> float:
+        """Get movement speed, accounting for wounds."""
+        speed = self.speed
+
+        # Leg wound reduces speed
+        if self.wounds[BODY_PART_LEGS]:
+            speed *= LEGS_WOUND_SPEED_REDUCTION
+
+        return speed
 
     def start_attack(self):
         """Start an attack action."""
@@ -52,8 +102,15 @@ class Enemy(PhysicsBody):
 
     def update(self, agent):
         """Update enemy state each frame."""
-        # Update AI behavior
-        self.update_ai(agent)
+        # Update stun timer
+        if self.stunned > 0:
+            self.stunned -= 1
+
+        # Update AI behavior (only if not stunned)
+        if not self.is_stunned():
+            self.update_ai(agent)
+        else:
+            self.vx = 0  # Can't move while stunned
 
         # Update physics
         self.update_physics()
@@ -105,7 +162,7 @@ class MeleeEnemy(Enemy):
                 self.start_attack()
         else:
             # Chase the player
-            self.vx = direction * self.speed
+            self.vx = direction * self.get_speed()
 
 
 class RangedEnemy(Enemy):
@@ -122,13 +179,19 @@ class RangedEnemy(Enemy):
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
 
+        # Get current speed (accounts for wounds)
+        current_speed = self.get_speed()
+        retreat_speed = ENEMY_RANGED_RETREAT_SPEED
+        if self.wounds[BODY_PART_LEGS]:
+            retreat_speed *= LEGS_WOUND_SPEED_REDUCTION
+
         # Try to maintain preferred distance
         if distance < self.preferred_distance - 20:
             # Too close - back away (but slowly!)
-            self.vx = -direction * ENEMY_RANGED_RETREAT_SPEED
+            self.vx = -direction * retreat_speed
         elif distance > self.preferred_distance + 20:
             # Too far - move closer
-            self.vx = direction * self.speed
+            self.vx = direction * current_speed
         else:
             # At preferred distance - stop and shoot
             self.vx = 0

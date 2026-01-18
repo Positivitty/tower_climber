@@ -357,3 +357,41 @@ class Renderer:
         # Instructions
         self.draw_text("AI must press at the right time!",
                        SCREEN_WIDTH // 2, bar_y - 30, COLOR_YELLOW, 'medium', center=True)
+
+    def draw_particles(self, particles: list):
+        """Draw all particles from the particle system."""
+        for particle in particles:
+            if not particle.active:
+                continue
+
+            # Calculate alpha-faded color
+            alpha = particle.get_alpha()
+            color = particle.color
+
+            # Draw the particle
+            size = max(1, int(particle.size * alpha))
+            pygame.draw.circle(
+                self.screen,
+                color,
+                (int(particle.x), int(particle.y)),
+                size
+            )
+
+    def draw_wound_indicator(self, x: float, y: float, body_part: str):
+        """Draw a wound indicator at a specific body part location."""
+        # Determine y offset based on body part
+        if body_part == 'head':
+            indicator_y = y - 60
+        elif body_part == 'body':
+            indicator_y = y - 40
+        else:  # legs
+            indicator_y = y - 15
+
+        # Draw red X to indicate wound
+        size = 6
+        pygame.draw.line(self.screen, COLOR_RED,
+                         (x - size, indicator_y - size),
+                         (x + size, indicator_y + size), 2)
+        pygame.draw.line(self.screen, COLOR_RED,
+                         (x + size, indicator_y - size),
+                         (x - size, indicator_y + size), 2)

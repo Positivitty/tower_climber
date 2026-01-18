@@ -59,10 +59,33 @@ REWARD_TRAINING_FAIL = -2
 REWARD_MINIGAME_PERFECT = 20
 
 # Combat Actions
-ACTION_ATTACK = 0
-ACTION_RUN = 1
-ACTION_CHARGE = 2  # Rush toward enemy, closing distance quickly
-COMBAT_ACTIONS = [ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE]
+ACTION_ATTACK_HIGH = 0   # Aim for head - critical damage, can stun
+ACTION_ATTACK_MID = 1    # Aim for body/arms - can disable attacks
+ACTION_ATTACK_LOW = 2    # Aim for legs - can slow enemy
+ACTION_RUN = 3
+ACTION_CHARGE = 4        # Rush toward enemy, closing distance quickly
+COMBAT_ACTIONS = [ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW, ACTION_RUN, ACTION_CHARGE]
+
+# Legacy alias for compatibility
+ACTION_ATTACK = ACTION_ATTACK_MID
+
+# Body parts
+BODY_PART_HEAD = 'head'
+BODY_PART_BODY = 'body'
+BODY_PART_LEGS = 'legs'
+
+# Body part damage multipliers
+HEAD_DAMAGE_MULT = 1.5      # Crits to head
+BODY_DAMAGE_MULT = 1.0      # Normal damage
+LEGS_DAMAGE_MULT = 0.8      # Less damage but slows
+
+# Body part wound thresholds (% of max HP damage to wound)
+WOUND_THRESHOLD = 0.25      # 25% of max HP in one hit wounds the part
+
+# Wound effects
+HEAD_WOUND_STUN_CHANCE = 0.3    # 30% chance to stun on head wound
+BODY_WOUND_DAMAGE_REDUCTION = 0.5  # 50% less damage when arms wounded
+LEGS_WOUND_SPEED_REDUCTION = 0.5   # 50% slower when legs wounded
 
 # Base Actions (what to do at base)
 ACTION_TRAIN_STRENGTH = 0
