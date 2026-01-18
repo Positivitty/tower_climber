@@ -182,15 +182,16 @@ class Renderer:
         text_rect = text.get_rect(center=(int(enemy.x), int(enemy.y - 75)))
         self.screen.blit(text, text_rect)
 
-    def draw_projectile(self, projectile):
+    def draw_projectile(self, projectile, color=None):
         """Draw a projectile."""
         if not projectile.active:
             return
 
+        outer_color = color if color else COLOR_YELLOW
         # Draw glowing projectile
         pygame.draw.circle(
             self.screen,
-            COLOR_YELLOW,
+            outer_color,
             (int(projectile.x), int(projectile.y)),
             projectile.radius + 2
         )
@@ -201,10 +202,10 @@ class Renderer:
             projectile.radius
         )
 
-    def draw_projectiles(self, projectiles: list):
+    def draw_projectiles(self, projectiles: list, color=None):
         """Draw all projectiles."""
         for projectile in projectiles:
-            self.draw_projectile(projectile)
+            self.draw_projectile(projectile, color)
 
     def draw_text(self, text: str, x: int, y: int, color: tuple = COLOR_WHITE,
                   font_size: str = 'small', center: bool = False):

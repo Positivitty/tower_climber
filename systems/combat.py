@@ -12,7 +12,8 @@ class CombatSystem:
     """Handles combat resolution, damage calculation, and rewards."""
 
     def __init__(self):
-        self.projectiles = []
+        self.projectiles = []  # Enemy projectiles
+        self.agent_projectiles = []  # Agent projectiles (for bows)
         self.pending_rewards = 0.0
         self.enemies_defeated_this_tick = 0
         self.damage_dealt_this_tick = 0
@@ -36,6 +37,16 @@ class CombatSystem:
         )
         self.projectiles.append(projectile)
 
+    def spawn_agent_projectile(self, agent):
+        """Spawn a projectile from the agent (for bows)."""
+        projectile = Projectile(
+            x=agent.x + agent.facing * 20,
+            y=agent.y - 40,
+            direction=agent.facing,
+            damage=agent.get_damage()
+        )
+        self.agent_projectiles.append(projectile)
+
     def update_projectiles(self, agent):
         """Update all projectiles and check for collisions with agent."""
         for projectile in self.projectiles:
@@ -57,6 +68,35 @@ class CombatSystem:
 
         # Remove inactive projectiles
         self.projectiles = [p for p in self.projectiles if p.active]
+
+    def update_agent_projectiles(self, enemies: list):
+        """Update agent projectiles and check for collisions with enemies."""
+        for projectile in self.agent_projectiles:
+            if not projectile.active:
+                continue
+
+            projectile.update()
+
+            # Check collision with each enemy
+            for enemy in enemies:
+                if not enemy.is_alive():
+                    continue
+                if projectile.collides_with(enemy):
+                    actual_damage = enemy.take_damage(projectile.damage)
+                    if actual_damage > 0:
+                        enemy.apply_knockback(projectile.direction, KNOCKBACK_FORCE)
+                        self.damage_dealt_this_tick += actual_damage
+                        self.pending_rewards += REWARD_DAMAGE_DEALT
+
+                        if not enemy.is_alive():
+                            self.enemies_defeated_this_tick += 1
+                            self.pending_rewards += REWARD_ENEMY_DEFEATED
+
+                    projectile.active = False
+                    break
+
+        # Remove inactive projectiles
+        self.agent_projectiles = [p for p in self.agent_projectiles if p.active]
 
     def process_agent_attack(self, agent, enemies: list):
         """Process agent's attack against enemies."""
@@ -133,4 +173,5 @@ class CombatSystem:
     def reset_for_floor(self):
         """Reset combat system for a new floor."""
         self.projectiles = []
+        self.agent_projectiles = []
         self.reset_tick_tracking()

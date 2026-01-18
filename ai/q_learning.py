@@ -34,6 +34,15 @@ class QLearningAgent:
         self.cumulative_reward = 0.0
         self.last_context = None  # 'combat', 'base', 'minigame'
 
+        # Intelligence tracking
+        self.total_battles = 0
+        self.battles_won = 0
+        self.floors_cleared = 0
+        self.highest_floor = 0
+        self.total_learning_updates = 0
+        self.lessons_learned = []  # List of key insights AI has learned
+        self.player_taught_actions = 0  # Actions taught by player
+
     def _get_q_table(self, context: str) -> dict:
         """Get the Q-table for a context."""
         if context == 'combat':
@@ -107,6 +116,114 @@ class QLearningAgent:
 
         self.last_reward = reward
         self.cumulative_reward += reward
+        self.total_learning_updates += 1
+
+        # Track significant lessons learned
+        if context == 'combat' and abs(new_q - current_q) > 5:
+            self._maybe_add_lesson(state, action, new_q, reward)
+
+    def _maybe_add_lesson(self, state, action, q_value, reward):
+        """Track when AI learns something significant."""
+        action_name = self.get_action_name(action, 'combat')
+        hp_names = ['High HP', 'Medium HP', 'Low HP', 'Critical HP']
+        hp_state = hp_names[state[0]] if state[0] < 4 else 'Unknown'
+
+        if reward > 20:
+            lesson = f"Learned: {action_name} is great when {hp_state}!"
+        elif reward < -20:
+            lesson = f"Learned: {action_name} is bad when {hp_state}"
+        elif q_value > 30:
+            lesson = f"Mastered: {action_name} at {hp_state}"
+        else:
+            return
+
+        if lesson not in self.lessons_learned:
+            self.lessons_learned.append(lesson)
+            if len(self.lessons_learned) > 20:  # Keep last 20
+                self.lessons_learned.pop(0)
+
+    def record_battle_result(self, won: bool, floor: int):
+        """Record the result of a battle."""
+        self.total_battles += 1
+        if won:
+            self.battles_won += 1
+            self.floors_cleared += 1
+            if floor > self.highest_floor:
+                self.highest_floor = floor
+
+    def get_intelligence_level(self) -> tuple:
+        """Calculate AI intelligence level (0-100) and title."""
+        # Factors that contribute to intelligence:
+        # 1. Knowledge (Q-table size)
+        knowledge = len(self.combat_q) + len(self.minigame_q)
+        knowledge_score = min(25, knowledge / 4)  # Max 25 points for 100+ entries
+
+        # 2. Win rate
+        if self.total_battles > 0:
+            win_rate = self.battles_won / self.total_battles
+            win_score = win_rate * 25  # Max 25 points
+        else:
+            win_score = 0
+
+        # 3. Experience (learning updates)
+        exp_score = min(25, self.total_learning_updates / 100)  # Max 25 for 2500+ updates
+
+        # 4. Exploration done (low epsilon = more exploitation)
+        exploit_score = (1 - self.epsilon) * 15  # Max 15 points
+
+        # 5. Player teaching bonus
+        teach_score = min(10, self.player_taught_actions / 5)  # Max 10 points
+
+        total = knowledge_score + win_score + exp_score + exploit_score + teach_score
+        total = min(100, max(0, total))
+
+        # Determine title based on score
+        if total < 10:
+            title = "Newborn"
+            desc = "Doesn't know anything yet"
+        elif total < 20:
+            title = "Infant"
+            desc = "Learning basic concepts"
+        elif total < 35:
+            title = "Toddler"
+            desc = "Starting to understand"
+        elif total < 50:
+            title = "Child"
+            desc = "Grasping combat basics"
+        elif total < 65:
+            title = "Teenager"
+            desc = "Developing strategies"
+        elif total < 80:
+            title = "Adult"
+            desc = "Competent fighter"
+        elif total < 90:
+            title = "Expert"
+            desc = "Skilled tactician"
+        elif total < 98:
+            title = "Master"
+            desc = "Near-perfect decisions"
+        else:
+            title = "Superhuman"
+            desc = "Beyond human capability"
+
+        return (total, title, desc)
+
+    def get_stats_summary(self) -> dict:
+        """Get a summary of AI stats for display."""
+        intel_score, intel_title, intel_desc = self.get_intelligence_level()
+        return {
+            'intelligence': intel_score,
+            'title': intel_title,
+            'description': intel_desc,
+            'battles': self.total_battles,
+            'wins': self.battles_won,
+            'win_rate': (self.battles_won / self.total_battles * 100) if self.total_battles > 0 else 0,
+            'highest_floor': self.highest_floor,
+            'knowledge': len(self.combat_q) + len(self.minigame_q),
+            'lessons': self.lessons_learned[-5:],  # Last 5 lessons
+            'epsilon': self.epsilon,
+            'player_taught': self.player_taught_actions
+        }
 
     def decay_epsilon(self):
         """Decay exploration rate."""
@@ -129,7 +246,16 @@ class QLearningAgent:
         data = {
             'combat': {},
             'base': {},
-            'minigame': {}
+            'minigame': {},
+            'stats': {
+                'total_battles': self.total_battles,
+                'battles_won': self.battles_won,
+                'floors_cleared': self.floors_cleared,
+                'highest_floor': self.highest_floor,
+                'total_learning_updates': self.total_learning_updates,
+                'lessons_learned': self.lessons_learned,
+                'player_taught_actions': self.player_taught_actions
+            }
         }
 
         for context, q_table in [('combat', self.combat_q),
@@ -147,7 +273,20 @@ class QLearningAgent:
         self.base_q = {}
         self.minigame_q = {}
 
+        # Load stats if present
+        if 'stats' in data:
+            stats = data['stats']
+            self.total_battles = stats.get('total_battles', 0)
+            self.battles_won = stats.get('battles_won', 0)
+            self.floors_cleared = stats.get('floors_cleared', 0)
+            self.highest_floor = stats.get('highest_floor', 0)
+            self.total_learning_updates = stats.get('total_learning_updates', 0)
+            self.lessons_learned = stats.get('lessons_learned', [])
+            self.player_taught_actions = stats.get('player_taught_actions', 0)
+
         for context, q_dict in data.items():
+            if context == 'stats':
+                continue  # Skip stats, already handled
             q_table = self._get_q_table(context)
             for key, value in q_dict.items():
                 parts = key.rsplit(':', 1)

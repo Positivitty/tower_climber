@@ -8,7 +8,7 @@ from config import (
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
     ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
     MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
-    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, GROUND_Y
+    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y
 )
 from entities.agent import Agent
 from entities.enemy import MeleeEnemy, RangedEnemy
@@ -32,6 +32,7 @@ STATE_LOOT = 'loot'
 STATE_TRAIN_SELECT = 'train_select'  # Player picks which stat to train
 STATE_EQUIPMENT = 'equipment'  # Player manages equipment
 STATE_AI_PRIORITY = 'ai_priority'  # Player sets AI combat priority
+STATE_AI_BRAIN = 'ai_brain'  # View AI intelligence and learning
 
 
 class Game:
@@ -97,6 +98,10 @@ class Game:
         # AI priority (player can guide the AI)
         self.ai_priority = 'balanced'  # 'aggressive', 'defensive', 'balanced'
         self.priority_selection = 1  # Menu selection (0=aggressive, 1=balanced, 2=defensive)
+
+        # Player teaching mode
+        self.player_teaching = False  # Is player controlling AI?
+        self.player_action = None  # Action chosen by player
 
         # Check for existing save
         if save_exists():
@@ -182,17 +187,29 @@ class Game:
         self.state = STATE_TRAINING
         self.ai_dialogue.think_about_training(stat, difficulty)
 
+    def _process_ranged_agent_attack(self):
+        """Handle ranged attack (bow) - spawn projectile instead of melee."""
+        if not self.agent.is_attacking or self.agent.attack_timer != 9:
+            return
+        # Spawn projectile
+        self.combat_system.spawn_agent_projectile(self.agent)
+
     def _execute_combat_action(self, action: int):
         alive_enemies = [e for e in self.enemies if e.is_alive()]
         if not alive_enemies:
             return
         nearest = min(alive_enemies, key=lambda e: self.agent.distance_to(e))
+
+        # Ranged weapons have longer attack range
+        attack_range = 200 if self.agent.has_ranged_weapon() else ATTACK_RANGE
+
         if action == ACTION_ATTACK:
             distance = self.agent.distance_to(nearest)
-            if distance > ATTACK_RANGE:
+            if distance > attack_range:
                 self.agent.move_toward(nearest.x)
             else:
                 self.agent.vx = 0
+                self.agent.facing = 1 if nearest.x > self.agent.x else -1
                 if self.agent.can_attack():
                     self.agent.start_attack()
         elif action == ACTION_RUN:
@@ -200,13 +217,14 @@ class Game:
         elif action == ACTION_CHARGE:
             # Rush toward enemy at double speed
             distance = self.agent.distance_to(nearest)
-            if distance > ATTACK_RANGE:
+            if distance > attack_range:
                 direction = 1 if nearest.x > self.agent.x else -1
                 self.agent.vx = direction * AGENT_CHARGE_SPEED
                 self.agent.facing = direction
             else:
                 # In range - attack
                 self.agent.vx = 0
+                self.agent.facing = 1 if nearest.x > self.agent.x else -1
                 if self.agent.can_attack():
                     self.agent.start_attack()
 
@@ -283,9 +301,15 @@ class Game:
             if enemy.is_alive():
                 enemy.update(self.agent)
 
-        self.combat_system.process_agent_attack(self.agent, self.enemies)
+        # Process agent attacks - ranged or melee based on weapon
+        if self.agent.has_ranged_weapon():
+            self._process_ranged_agent_attack()
+        else:
+            self.combat_system.process_agent_attack(self.agent, self.enemies)
+
         self.combat_system.process_enemy_attacks(self.agent, self.enemies)
         self.combat_system.update_projectiles(self.agent)
+        self.combat_system.update_agent_projectiles(self.enemies)
 
         self.decision_tick_counter += 1
         if self.decision_tick_counter >= DECISION_TICK_FRAMES:
@@ -310,8 +334,15 @@ class Game:
 
         self.combat_system.reset_tick_tracking()
 
-        # Apply AI priority bias to action selection
-        action = self._choose_action_with_priority(new_state)
+        # Check if player is teaching
+        if self.player_teaching and self.player_action is not None:
+            action = self.player_action
+            self.player_action = None  # Reset after use
+            self.q_agent.player_taught_actions += 1
+        else:
+            # Apply AI priority bias to action selection
+            action = self._choose_action_with_priority(new_state)
+
         self.q_agent.last_action = action  # Track for learning
         self._execute_combat_action(action)
 
@@ -364,9 +395,13 @@ class Game:
             self.q_agent.learn(self.current_state, self.q_agent.last_action, reward,
                                final_state, context='combat', done=True)
 
+        # Record battle result for intelligence tracking
+        self.q_agent.record_battle_result(floor_cleared, self.current_floor)
+
         self.q_agent.decay_epsilon()
         self.floor_cleared = floor_cleared
         self.agent.end_floor(floor_cleared)
+        self.player_teaching = False  # Reset teaching mode
 
         if floor_cleared:
             self.ai_dialogue.add_thought(f"Floor {self.current_floor} CLEARED!")
@@ -404,6 +439,23 @@ class Game:
                 elif self.state == STATE_COMBAT:
                     if event.key == pygame.K_ESCAPE:
                         self._end_floor(floor_cleared=False)
+                    # Player teaching controls
+                    elif event.key == pygame.K_t:
+                        self.player_teaching = not self.player_teaching
+                        if self.player_teaching:
+                            self.ai_dialogue.add_thought("Teaching mode ON - Press A/R/C to command")
+                        else:
+                            self.ai_dialogue.add_thought("Teaching mode OFF - AI decides")
+                    elif self.player_teaching:
+                        if event.key == pygame.K_a:
+                            self.player_action = ACTION_ATTACK
+                            self.ai_dialogue.add_thought("Player: ATTACK!")
+                        elif event.key == pygame.K_r:
+                            self.player_action = ACTION_RUN
+                            self.ai_dialogue.add_thought("Player: RUN!")
+                        elif event.key == pygame.K_c:
+                            self.player_action = ACTION_CHARGE
+                            self.ai_dialogue.add_thought("Player: CHARGE!")
                 elif self.state == STATE_TRAINING:
                     if event.key == pygame.K_ESCAPE:
                         self.current_minigame = None
@@ -414,6 +466,9 @@ class Game:
                     self._handle_equipment_input(event.key)
                 elif self.state == STATE_AI_PRIORITY:
                     self._handle_priority_input(event.key)
+                elif self.state == STATE_AI_BRAIN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.state = STATE_BASE
 
     def _handle_char_create_input(self, key):
         if key == pygame.K_UP:
@@ -430,9 +485,9 @@ class Game:
     def _handle_base_input(self, key):
         # Arrow key navigation
         if key == pygame.K_UP:
-            self.base_menu_selection = (self.base_menu_selection - 1) % 4
+            self.base_menu_selection = (self.base_menu_selection - 1) % 5
         elif key == pygame.K_DOWN:
-            self.base_menu_selection = (self.base_menu_selection + 1) % 4
+            self.base_menu_selection = (self.base_menu_selection + 1) % 5
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
             # Execute selected option
             if self.base_menu_selection == 0:
@@ -444,6 +499,8 @@ class Game:
             elif self.base_menu_selection == 2:
                 self.state = STATE_AI_PRIORITY
             elif self.base_menu_selection == 3:
+                self.state = STATE_AI_BRAIN
+            elif self.base_menu_selection == 4:
                 self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
                 self.agent.start_new_climb()
                 self._start_floor()
@@ -457,6 +514,8 @@ class Game:
         elif key == pygame.K_3:
             self.state = STATE_AI_PRIORITY
         elif key == pygame.K_4:
+            self.state = STATE_AI_BRAIN
+        elif key == pygame.K_5:
             self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
             self.agent.start_new_climb()
             self._start_floor()
@@ -552,6 +611,8 @@ class Game:
             pass  # Handled by events
         elif self.state == STATE_AI_PRIORITY:
             pass  # Handled by events
+        elif self.state == STATE_AI_BRAIN:
+            pass  # Handled by events
 
     def _render(self):
         self.renderer.clear()
@@ -572,6 +633,8 @@ class Game:
             self._render_equipment()
         elif self.state == STATE_AI_PRIORITY:
             self._render_ai_priority()
+        elif self.state == STATE_AI_BRAIN:
+            self._render_ai_brain()
 
         # Always draw dialogue box
         self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
@@ -636,13 +699,13 @@ class Game:
                 self.renderer.draw_text(f"  {slot}: (empty)", 10, y, COLOR_WHITE, 'small')
 
         # Base menu options
-        menu_y = 240
-        options = ["Train Stats", "Equipment", "AI Strategy", "Start Climb"]
+        menu_y = 220
+        options = ["Train Stats", "Equipment", "AI Strategy", "AI Brain", "Start Climb"]
         self.renderer.draw_text("What would you like to do?", SCREEN_WIDTH // 2, menu_y, COLOR_WHITE, 'medium', center=True)
         for i, label in enumerate(options):
             color = COLOR_YELLOW if i == self.base_menu_selection else COLOR_GREEN
             prefix = "> " if i == self.base_menu_selection else "  "
-            self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 30 + i * 25, color, 'small', center=True)
+            self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 30 + i * 22, color, 'small', center=True)
 
         self.renderer.draw_text(f"AI Priority: {self.ai_priority.upper()}", SCREEN_WIDTH // 2, 370, COLOR_CYAN, 'small', center=True)
 
@@ -652,8 +715,15 @@ class Game:
         for enemy in self.enemies:
             self.renderer.draw_enemy(enemy)
         self.renderer.draw_projectiles(self.combat_system.projectiles)
+        self.renderer.draw_projectiles(self.combat_system.agent_projectiles, color=COLOR_CYAN)  # Agent arrows in cyan
         self.renderer.draw_floor_info(self.current_floor)
         self.renderer.draw_agent_stats_compact(self.agent)
+
+        # Show teaching mode hint
+        if self.player_teaching:
+            self.renderer.draw_text("TEACHING MODE - A:Attack R:Run C:Charge", SCREEN_WIDTH // 2, 20, COLOR_YELLOW, 'small', center=True)
+        else:
+            self.renderer.draw_text("Press T to teach AI", SCREEN_WIDTH // 2, 20, COLOR_WHITE, 'small', center=True)
 
     def _render_training(self):
         stat_name = self.minigame_stat.upper() if self.minigame_stat else "TRAINING"
@@ -823,6 +893,58 @@ class Game:
             y += 60 if is_selected else 35
 
         self.renderer.draw_text("UP/DOWN to select, ENTER to confirm, ESC to go back", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+
+    def _render_ai_brain(self):
+        self.renderer.draw_text("AI BRAIN", SCREEN_WIDTH // 2, 30, COLOR_YELLOW, 'large', center=True)
+
+        stats = self.q_agent.get_stats_summary()
+
+        # Draw brain meter (intelligence bar)
+        intel = stats['intelligence']
+        bar_width = 300
+        bar_x = SCREEN_WIDTH // 2 - bar_width // 2
+        bar_y = 70
+
+        # Background
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (bar_x, bar_y, bar_width, 25))
+        # Fill based on intelligence
+        fill_width = int(bar_width * intel / 100)
+        # Color gradient based on level
+        if intel < 20:
+            bar_color = COLOR_RED
+        elif intel < 50:
+            bar_color = COLOR_YELLOW
+        elif intel < 80:
+            bar_color = COLOR_GREEN
+        else:
+            bar_color = COLOR_CYAN
+        pygame.draw.rect(self.screen, bar_color, (bar_x, bar_y, fill_width, 25))
+        pygame.draw.rect(self.screen, COLOR_WHITE, (bar_x, bar_y, bar_width, 25), 2)
+
+        # Title and description
+        self.renderer.draw_text(f"{stats['title']} ({intel:.0f}%)", SCREEN_WIDTH // 2, bar_y + 12, COLOR_WHITE, 'medium', center=True)
+        self.renderer.draw_text(stats['description'], SCREEN_WIDTH // 2, bar_y + 40, COLOR_CYAN, 'small', center=True)
+
+        # Stats grid
+        y = 130
+        self.renderer.draw_text(f"Battles: {stats['battles']}  |  Wins: {stats['wins']}  |  Win Rate: {stats['win_rate']:.1f}%", SCREEN_WIDTH // 2, y, COLOR_WHITE, 'small', center=True)
+        y += 25
+        self.renderer.draw_text(f"Highest Floor: {stats['highest_floor']}  |  Knowledge: {stats['knowledge']} entries", SCREEN_WIDTH // 2, y, COLOR_WHITE, 'small', center=True)
+        y += 25
+        self.renderer.draw_text(f"Exploration: {stats['epsilon']*100:.1f}%  |  Player Taught: {stats['player_taught']} actions", SCREEN_WIDTH // 2, y, COLOR_WHITE, 'small', center=True)
+
+        # Lessons learned
+        y += 40
+        self.renderer.draw_text("Recent Lessons:", SCREEN_WIDTH // 2, y, COLOR_YELLOW, 'medium', center=True)
+        y += 25
+        if stats['lessons']:
+            for lesson in stats['lessons']:
+                self.renderer.draw_text(lesson, SCREEN_WIDTH // 2, y, COLOR_GREEN, 'small', center=True)
+                y += 20
+        else:
+            self.renderer.draw_text("(No lessons learned yet - keep fighting!)", SCREEN_WIDTH // 2, y, COLOR_WHITE, 'small', center=True)
+
+        self.renderer.draw_text("Press ESC to go back", SCREEN_WIDTH // 2, 380, COLOR_WHITE, 'small', center=True)
 
     def run(self):
         while self.running:

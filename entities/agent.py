@@ -127,6 +127,17 @@ class Agent(PhysicsBody):
     def can_attack(self) -> bool:
         return self.attack_cooldown <= 0
 
+    def has_ranged_weapon(self) -> bool:
+        """Check if agent has a bow or ranged weapon equipped."""
+        if not self.equipment:
+            return False
+        weapon = self.equipment.get_equipped_item('weapon')
+        if not weapon:
+            return False
+        # Check if weapon name suggests ranged
+        ranged_keywords = ['bow', 'crossbow', 'staff', 'wand']
+        return any(kw in weapon.name.lower() for kw in ranged_keywords)
+
     def start_attack(self):
         if self.can_attack():
             self.is_attacking = True
