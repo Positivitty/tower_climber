@@ -10,7 +10,7 @@ from config import PROJECTILE_SPEED, SCREEN_WIDTH, RANGED_DAMAGE, COLOR_YELLOW
 class Projectile:
     """A projectile fired by ranged enemies."""
 
-    def __init__(self, x: float, y: float, direction: int, damage: int = None):
+    def __init__(self, x: float, y: float, direction: int, damage: int = None, element: str = None):
         """Create a projectile.
 
         Args:
@@ -18,12 +18,14 @@ class Projectile:
             y: Starting y position
             direction: 1 for right, -1 for left
             damage: Damage dealt on hit (defaults to RANGED_DAMAGE)
+            element: Elemental type (fire, ice, poison) or None
         """
         self.x = x
         self.y = y
         self.direction = direction
         self.speed = PROJECTILE_SPEED
         self.damage = damage if damage is not None else RANGED_DAMAGE
+        self.element = element
         self.radius = 5
         self.active = True
         self.color = COLOR_YELLOW

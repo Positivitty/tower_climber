@@ -5,6 +5,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from systems.physics import PhysicsBody
+from systems.status_effects import StatusEffectManager
 from config import (
     SCREEN_WIDTH, GROUND_Y, AGENT_SPEED, AGENT_MAX_HP,
     AGENT_BASE_STRENGTH, AGENT_BASE_INTELLIGENCE,
@@ -78,6 +79,9 @@ class Agent(PhysicsBody):
 
         # Training unlocks
         self.unlocked_training = set()  # Set of stat names that can be trained
+
+        # Status effects (from elemental damage)
+        self.status_effects = StatusEffectManager()
 
     def get_total_stat(self, stat: str) -> int:
         """Get stat including equipment bonuses."""
@@ -231,6 +235,9 @@ class Agent(PhysicsBody):
         if self.stunned > 0:
             self.stunned -= 1
 
+        # Update status effects (burn, freeze, poison)
+        self.status_effects.update(self)
+
     def is_stunned(self) -> bool:
         """Check if agent is currently stunned."""
         return self.stunned > 0
@@ -313,6 +320,9 @@ class Agent(PhysicsBody):
         self.vy = 0
         self.grounded = True
 
+        # Clear status effects (burn, freeze, poison)
+        self.status_effects.clear_with_removal(self)
+
         # Angel divine heal
         if self.race == 'angel' and self.divine_heal_pending:
             self.heal(int(self.max_hp * 0.1))
@@ -324,6 +334,9 @@ class Agent(PhysicsBody):
         self.undying_available = (self.race == 'undead')
         self.divine_heal_pending = False
         self.clear_wounds()
+
+        # Clear status effects (burn, freeze, poison)
+        self.status_effects.clear_with_removal(self)
 
         # Reset skill state
         self.active_buffs = []

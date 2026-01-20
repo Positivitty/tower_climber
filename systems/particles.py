@@ -101,6 +101,88 @@ class ParticleSystem:
             particle = Particle(x + (i - 1) * 10, y - 60, vx, vy, color, size, lifetime)
             self.particles.append(particle)
 
+    def spawn_burn_particles(self, x: float, y: float, amount: int = 5):
+        """Spawn fire/burn particles rising from entity."""
+        for _ in range(amount):
+            color = random.choice([
+                (255, 100, 0),   # Orange
+                (255, 150, 0),   # Bright orange
+                (255, 50, 0),    # Red-orange
+                (255, 200, 50),  # Yellow-orange
+            ])
+
+            # Fire rises up with some drift
+            vx = random.uniform(-1, 1)
+            vy = random.uniform(-3, -1)  # Upward
+
+            size = random.randint(3, 6)
+            lifetime = random.randint(15, 30)
+
+            # Spawn around the entity
+            spawn_x = x + random.uniform(-10, 10)
+            spawn_y = y - 30 + random.uniform(-10, 10)
+
+            particle = Particle(spawn_x, spawn_y, vx, vy, color, size, lifetime)
+            particle.vy_gravity = -0.1  # Fire rises instead of falls
+            self.particles.append(particle)
+
+    def spawn_freeze_particles(self, x: float, y: float, amount: int = 5):
+        """Spawn ice/frost particles around entity."""
+        for _ in range(amount):
+            color = random.choice([
+                (100, 200, 255),  # Light blue
+                (150, 220, 255),  # Lighter blue
+                (200, 240, 255),  # Near white
+                (80, 180, 230),   # Medium blue
+            ])
+
+            # Ice drifts slowly outward and down
+            vx = random.uniform(-2, 2)
+            vy = random.uniform(-0.5, 1)
+
+            size = random.randint(2, 4)
+            lifetime = random.randint(20, 40)
+
+            # Spawn around the entity
+            spawn_x = x + random.uniform(-15, 15)
+            spawn_y = y - 30 + random.uniform(-15, 5)
+
+            particle = Particle(spawn_x, spawn_y, vx, vy, color, size, lifetime)
+            self.particles.append(particle)
+
+    def spawn_poison_particles(self, x: float, y: float, amount: int = 5):
+        """Spawn poison/toxic particles bubbling up."""
+        for _ in range(amount):
+            color = random.choice([
+                (100, 200, 50),   # Green
+                (80, 180, 40),    # Darker green
+                (120, 220, 60),   # Bright green
+                (60, 150, 30),    # Dark green
+            ])
+
+            # Poison bubbles up with some wobble
+            vx = random.uniform(-1.5, 1.5)
+            vy = random.uniform(-2, -0.5)
+
+            size = random.randint(2, 5)
+            lifetime = random.randint(25, 45)
+
+            # Spawn around the entity
+            spawn_x = x + random.uniform(-12, 12)
+            spawn_y = y - 25 + random.uniform(-5, 10)
+
+            particle = Particle(spawn_x, spawn_y, vx, vy, color, size, lifetime)
+            self.particles.append(particle)
+
+    def spawn_element_particles(self, x: float, y: float, element: str, amount: int = 5):
+        """Spawn particles based on element type."""
+        if element == 'fire':
+            self.spawn_burn_particles(x, y, amount)
+        elif element == 'ice':
+            self.spawn_freeze_particles(x, y, amount)
+        elif element == 'poison':
+            self.spawn_poison_particles(x, y, amount)
+
     def update(self):
         """Update all particles."""
         for particle in self.particles:

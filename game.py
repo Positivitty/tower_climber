@@ -11,11 +11,16 @@ from config import (
     ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
     MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
     COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y,
-    COLOR_ORANGE, COLOR_PURPLE
+    COLOR_ORANGE, COLOR_PURPLE,
+    BOSS_FLOOR_INTERVAL, ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
+    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY
 )
 from systems.particles import ParticleSystem
 from entities.agent import Agent
-from entities.enemy import MeleeEnemy, RangedEnemy
+from entities.enemy import (
+    MeleeEnemy, RangedEnemy, TankEnemy, AssassinEnemy,
+    InfernoGuardian, FrostWarden, PlagueLord
+)
 from ai.q_learning import QLearningAgent
 from ai.state import StateEncoder
 from ai.dialogue import AIDialogue
@@ -173,15 +178,98 @@ class Game:
         return (floor_bucket, min(4, lowest // 5), min(4, highest // 5), min(4, total // 20))
 
     def _spawn_enemies(self):
+        """Spawn enemies based on floor number."""
+        import random
         self.enemies = []
-        melee = MeleeEnemy(SCREEN_WIDTH * 0.7)
-        ranged = RangedEnemy(SCREEN_WIDTH * 0.85)
-        floor_mult = 1 + (self.current_floor - 1) * 0.15
-        melee.hp = int(melee.hp * floor_mult)
-        melee.max_hp = melee.hp
-        ranged.hp = int(ranged.hp * floor_mult)
-        ranged.max_hp = ranged.hp
-        self.enemies = [melee, ranged]
+
+        # Check for boss floor
+        if self.current_floor % BOSS_FLOOR_INTERVAL == 0:
+            self._spawn_boss()
+            return
+
+        # Get enemy pool for current floor
+        enemy_pool = self._get_enemy_pool()
+
+        # Number of enemies scales with floor (2 to 5)
+        num_enemies = min(5, 2 + self.current_floor // 3)
+
+        for i in range(num_enemies):
+            enemy_type = random.choice(enemy_pool)
+            x_pos = SCREEN_WIDTH * (0.6 + i * 0.08)
+
+            enemy = self._create_enemy(enemy_type, x_pos)
+
+            # Apply floor scaling
+            floor_mult = 1 + (self.current_floor - 1) * 0.15
+            enemy.hp = int(enemy.hp * floor_mult)
+            enemy.max_hp = enemy.hp
+
+            # Chance for elemental variant (increases with floor)
+            elemental_chance = 0.1 + self.current_floor * 0.02
+            if random.random() < elemental_chance:
+                self._apply_element(enemy)
+
+            self.enemies.append(enemy)
+
+    def _get_enemy_pool(self) -> list:
+        """Get available enemy types for current floor."""
+        pool = ['melee', 'ranged']
+
+        if self.current_floor >= 2:
+            pool.append('assassin')
+        if self.current_floor >= 3:
+            pool.append('tank')
+
+        return pool
+
+    def _create_enemy(self, enemy_type: str, x_pos: float):
+        """Factory method for creating enemies."""
+        if enemy_type == 'melee':
+            return MeleeEnemy(x_pos)
+        elif enemy_type == 'ranged':
+            return RangedEnemy(x_pos)
+        elif enemy_type == 'tank':
+            return TankEnemy(x_pos)
+        elif enemy_type == 'assassin':
+            return AssassinEnemy(x_pos)
+        return MeleeEnemy(x_pos)  # Default fallback
+
+    def _apply_element(self, enemy):
+        """Apply random elemental type to enemy."""
+        import random
+        element = random.choice([ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON])
+        enemy.element = element
+
+        # Update color based on element
+        if element == ELEMENT_FIRE:
+            enemy.color = COLOR_FIRE_ENEMY
+        elif element == ELEMENT_ICE:
+            enemy.color = COLOR_ICE_ENEMY
+        elif element == ELEMENT_POISON:
+            enemy.color = COLOR_POISON_ENEMY
+
+    def _spawn_boss(self):
+        """Spawn appropriate boss for current floor."""
+        boss_index = self.current_floor // BOSS_FLOOR_INTERVAL
+
+        if boss_index == 1:
+            boss = InfernoGuardian(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+        elif boss_index == 2:
+            boss = FrostWarden(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+        elif boss_index == 3:
+            boss = PlagueLord(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+        else:
+            # Cycle through bosses for higher floors with extra scaling
+            boss_type = (boss_index - 1) % 3
+            if boss_type == 0:
+                boss = InfernoGuardian(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+            elif boss_type == 1:
+                boss = FrostWarden(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+            else:
+                boss = PlagueLord(SCREEN_WIDTH * 0.7, GROUND_Y, self.current_floor)
+
+        self.enemies = [boss]
+        self.ai_dialogue.add_thought(f"BOSS BATTLE: {boss.name}!")
 
     def _start_floor(self):
         self.agent.reset_for_floor()

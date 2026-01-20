@@ -6,7 +6,10 @@ from config import (
     COLOR_WHITE, COLOR_BLACK, COLOR_GRAY, COLOR_DARK_GRAY,
     COLOR_GREEN, COLOR_RED, COLOR_YELLOW, COLOR_BLUE,
     SPRITE_AGENT_PRIMARY, SPRITE_AGENT_SECONDARY,
-    SPRITE_ENEMY_PRIMARY, SPRITE_ENEMY_SECONDARY
+    SPRITE_ENEMY_PRIMARY, SPRITE_ENEMY_SECONDARY,
+    COLOR_TANK, COLOR_ASSASSIN, COLOR_BOSS,
+    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
+    ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON
 )
 
 
@@ -161,33 +164,165 @@ class Renderer:
             is_enemy=False
         )
 
+        # Draw status effects on agent
+        self._draw_status_effects(agent)
+
     def draw_enemy(self, enemy):
         """Draw an enemy."""
         if not enemy.is_alive():
             return
 
         hp_ratio = enemy.hp / enemy.max_hp if enemy.max_hp > 0 else 0
+
+        # Determine colors based on enemy type
+        primary_color = SPRITE_ENEMY_PRIMARY
+        secondary_color = SPRITE_ENEMY_SECONDARY
+
+        if enemy.enemy_type == 'tank':
+            primary_color = COLOR_TANK
+            secondary_color = (80, 80, 120)
+        elif enemy.enemy_type == 'assassin':
+            primary_color = COLOR_ASSASSIN
+            secondary_color = (60, 0, 60)
+        elif enemy.enemy_type == 'boss':
+            primary_color = COLOR_BOSS
+            secondary_color = (160, 40, 160)
+
+        # Override with element color if elemental
+        if enemy.element == ELEMENT_FIRE:
+            primary_color = COLOR_FIRE_ENEMY
+            secondary_color = (200, 80, 0)
+        elif enemy.element == ELEMENT_ICE:
+            primary_color = COLOR_ICE_ENEMY
+            secondary_color = (80, 160, 200)
+        elif enemy.element == ELEMENT_POISON:
+            primary_color = COLOR_POISON_ENEMY
+            secondary_color = (80, 160, 40)
+
         self.draw_sprite(
             enemy.x, enemy.y,
             enemy.facing,
-            SPRITE_ENEMY_PRIMARY, SPRITE_ENEMY_SECONDARY,
+            primary_color, secondary_color,
             attacking=enemy.is_attacking,
             hp_ratio=hp_ratio,
             is_enemy=True
         )
 
-        # Draw enemy type indicator above HP bar
-        label = "MELEE" if enemy.enemy_type == 'melee' else "RANGED"
-        text = self.font_small.render(label, True, COLOR_YELLOW)
+        # Determine label and color
+        label_color = COLOR_YELLOW
+        if enemy.enemy_type == 'melee':
+            label = "MELEE"
+        elif enemy.enemy_type == 'ranged':
+            label = "RANGED"
+        elif enemy.enemy_type == 'tank':
+            label = "TANK"
+            label_color = COLOR_TANK
+        elif enemy.enemy_type == 'assassin':
+            label = "ASSASSIN"
+            label_color = COLOR_ASSASSIN
+        elif enemy.enemy_type == 'boss':
+            label = enemy.name if hasattr(enemy, 'name') else "BOSS"
+            label_color = COLOR_BOSS
+        else:
+            label = enemy.enemy_type.upper()
+
+        # Add element prefix if elemental
+        if enemy.element:
+            element_prefix = enemy.element.upper()
+            label = f"{element_prefix} {label}"
+            if enemy.element == ELEMENT_FIRE:
+                label_color = COLOR_FIRE_ENEMY
+            elif enemy.element == ELEMENT_ICE:
+                label_color = COLOR_ICE_ENEMY
+            elif enemy.element == ELEMENT_POISON:
+                label_color = COLOR_POISON_ENEMY
+
+        # Draw label
+        text = self.font_small.render(label, True, label_color)
         text_rect = text.get_rect(center=(int(enemy.x), int(enemy.y - 75)))
         self.screen.blit(text, text_rect)
+
+        # Draw boss-specific indicators
+        if enemy.enemy_type == 'boss':
+            self._draw_boss_indicators(enemy)
+
+        # Draw status effect indicators
+        self._draw_status_effects(enemy)
+
+    def _draw_boss_indicators(self, boss):
+        """Draw boss phase dots and enrage status."""
+        # Draw phase dots below HP bar
+        if hasattr(boss, 'phase') and hasattr(boss, 'max_phase'):
+            dot_y = int(boss.y - 85)
+            dot_spacing = 12
+            total_width = (boss.max_phase - 1) * dot_spacing
+            start_x = int(boss.x) - total_width // 2
+
+            for i in range(boss.max_phase):
+                dot_x = start_x + i * dot_spacing
+                color = COLOR_BOSS if i < boss.phase else COLOR_DARK_GRAY
+                pygame.draw.circle(self.screen, color, (dot_x, dot_y), 4)
+
+        # Draw enrage indicator
+        if hasattr(boss, 'enraged') and boss.enraged:
+            enrage_text = self.font_small.render("ENRAGED!", True, COLOR_RED)
+            enrage_rect = enrage_text.get_rect(center=(int(boss.x), int(boss.y - 95)))
+            self.screen.blit(enrage_text, enrage_rect)
+
+    def _draw_status_effects(self, entity):
+        """Draw status effect indicators above entity."""
+        if not hasattr(entity, 'status_effects'):
+            return
+
+        effects = entity.status_effects.effects
+        if not effects:
+            return
+
+        # Draw effect icons to the right of the entity
+        icon_x = int(entity.x) + 25
+        icon_y = int(entity.y) - 50
+
+        for i, effect in enumerate(effects):
+            # Determine color based on effect type
+            if effect.effect_type == ELEMENT_FIRE:
+                color = COLOR_FIRE_ENEMY
+                symbol = "B"  # Burn
+            elif effect.effect_type == ELEMENT_ICE:
+                color = COLOR_ICE_ENEMY
+                symbol = "F"  # Freeze
+            elif effect.effect_type == ELEMENT_POISON:
+                color = COLOR_POISON_ENEMY
+                symbol = "P"  # Poison
+            else:
+                color = COLOR_WHITE
+                symbol = "?"
+
+            # Draw effect indicator
+            pygame.draw.circle(self.screen, color, (icon_x, icon_y + i * 15), 6)
+            text = self.font_small.render(symbol, True, COLOR_WHITE)
+            text_rect = text.get_rect(center=(icon_x, icon_y + i * 15))
+            self.screen.blit(text, text_rect)
 
     def draw_projectile(self, projectile, color=None):
         """Draw a projectile."""
         if not projectile.active:
             return
 
-        outer_color = color if color else COLOR_YELLOW
+        # Determine color based on element
+        if color:
+            outer_color = color
+        elif hasattr(projectile, 'element') and projectile.element:
+            if projectile.element == ELEMENT_FIRE:
+                outer_color = COLOR_FIRE_ENEMY
+            elif projectile.element == ELEMENT_ICE:
+                outer_color = COLOR_ICE_ENEMY
+            elif projectile.element == ELEMENT_POISON:
+                outer_color = COLOR_POISON_ENEMY
+            else:
+                outer_color = COLOR_YELLOW
+        else:
+            outer_color = COLOR_YELLOW
+
         # Draw glowing projectile
         pygame.draw.circle(
             self.screen,

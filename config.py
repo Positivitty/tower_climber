@@ -48,6 +48,50 @@ ENEMY_MELEE_HP = 30
 ENEMY_RANGED_HP = 20
 ENEMY_RANGED_PREFERRED_DISTANCE = 150
 
+# Tank enemy stats (multipliers of base melee)
+ENEMY_TANK_HP_MULT = 2.5
+ENEMY_TANK_DAMAGE_MULT = 0.6
+ENEMY_TANK_SPEED_MULT = 0.5
+ENEMY_TANK_ARMOR_HITS = 3  # First N hits reduced by 50%
+
+# Assassin enemy stats (multipliers of base melee)
+ENEMY_ASSASSIN_HP_MULT = 0.5
+ENEMY_ASSASSIN_DAMAGE_MULT = 2.0
+ENEMY_ASSASSIN_SPEED_MULT = 2.0
+ENEMY_ASSASSIN_FIRST_STRIKE_BONUS = 0.5  # +50% on first hit
+
+# Elements
+ELEMENT_FIRE = 'fire'
+ELEMENT_ICE = 'ice'
+ELEMENT_POISON = 'poison'
+
+# Status effect durations (frames at 60 FPS)
+BURN_DURATION = 180  # 3 seconds
+BURN_TICK_DAMAGE = 2
+BURN_TICK_INTERVAL = 30  # Every 0.5 seconds
+
+FREEZE_DURATION = 120  # 2 seconds
+FREEZE_SPEED_MULT = 0.3  # 70% slow
+
+POISON_DURATION = 300  # 5 seconds
+POISON_TICK_DAMAGE = 1
+POISON_TICK_INTERVAL = 60  # Every 1 second
+
+# Boss settings
+BOSS_FLOOR_INTERVAL = 5  # Boss every 5 floors
+BOSS_HP_MULT = 5.0
+BOSS_DAMAGE_MULT = 1.5
+BOSS_SPECIAL_COOLDOWN = 300  # 5 seconds
+BOSS_ENRAGE_THRESHOLD = 0.3  # Enrage at 30% HP
+
+# Enemy type colors
+COLOR_TANK = (100, 100, 150)  # Steel blue
+COLOR_ASSASSIN = (80, 0, 80)  # Dark purple
+COLOR_FIRE_ENEMY = (255, 100, 0)  # Orange-red
+COLOR_ICE_ENEMY = (100, 200, 255)  # Light blue
+COLOR_POISON_ENEMY = (100, 200, 50)  # Sickly green
+COLOR_BOSS = (200, 50, 200)  # Magenta
+
 # Rewards for Q-learning
 REWARD_DAMAGE_DEALT = 5
 REWARD_ENEMY_DEFEATED = 50

@@ -9,6 +9,7 @@ from config import (
     WOUND_THRESHOLD
 )
 from entities.projectile import Projectile
+from systems.status_effects import create_effect
 
 
 # Map attack height to body part
@@ -53,7 +54,8 @@ class CombatSystem:
             x=enemy.x + enemy.facing * 20,
             y=enemy.y - 40,  # At torso height
             direction=enemy.facing,
-            damage=enemy.damage
+            damage=enemy.damage,
+            element=enemy.element
         )
         self.projectiles.append(projectile)
 
@@ -105,6 +107,12 @@ class CombatSystem:
 
                     self.damage_taken_this_tick += actual_damage
                     self.pending_rewards += REWARD_DAMAGE_TAKEN
+
+                    # Apply elemental status effect if projectile has an element
+                    if projectile.element:
+                        effect = create_effect(projectile.element)
+                        if effect:
+                            agent.status_effects.add_effect(effect, agent)
 
                     # Note: Thorns doesn't reflect projectile damage (only melee)
 
@@ -279,6 +287,12 @@ class CombatSystem:
 
                     self.damage_taken_this_tick += actual_damage
                     self.pending_rewards += REWARD_DAMAGE_TAKEN
+
+                    # Apply elemental status effect if enemy has an element
+                    if enemy.element:
+                        effect = create_effect(enemy.element)
+                        if effect:
+                            agent.status_effects.add_effect(effect, agent)
 
                     # Apply thorns damage reflection
                     thorns_percent = agent.get_thorns_percent()
