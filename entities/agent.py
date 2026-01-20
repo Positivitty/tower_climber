@@ -11,7 +11,8 @@ from config import (
     AGENT_BASE_AGILITY, AGENT_BASE_DEFENSE, AGENT_BASE_LUCK,
     ATTACK_COOLDOWN_FRAMES, SPRITE_AGENT_PRIMARY,
     BODY_PART_HEAD, BODY_PART_BODY, BODY_PART_LEGS,
-    BODY_WOUND_DAMAGE_REDUCTION, LEGS_WOUND_SPEED_REDUCTION
+    BODY_WOUND_DAMAGE_REDUCTION, LEGS_WOUND_SPEED_REDUCTION,
+    MAX_ACTIVE_SKILLS, MAX_PASSIVE_SKILLS
 )
 
 
@@ -68,6 +69,16 @@ class Agent(PhysicsBody):
         # Visual
         self.color = SPRITE_AGENT_PRIMARY
 
+        # Skills
+        self.active_skills = []  # List of Skill objects (max 3)
+        self.passive_skills = []  # List of Skill objects (max 5)
+        self.active_buffs = []  # Active buff effects [{name, frames_remaining, effects}]
+        self.regen_counter = 0  # For HP regen passive
+        self.second_wind_available = False  # Per-floor death save
+
+        # Training unlocks
+        self.unlocked_training = set()  # Set of stat names that can be trained
+
     def get_total_stat(self, stat: str) -> int:
         """Get stat including equipment bonuses."""
         base = self.get_stat(stat)
@@ -76,7 +87,7 @@ class Agent(PhysicsBody):
             return base + equip_bonus
         return base
 
-    def get_damage(self) -> int:
+    def get_damage(self, target_hp_ratio: float = 1.0) -> int:
         """Calculate attack damage."""
         import random
         base_damage = self.get_total_stat('strength')
@@ -84,6 +95,21 @@ class Agent(PhysicsBody):
         # Body wound reduces damage output
         if self.wounds[BODY_PART_BODY]:
             base_damage = int(base_damage * BODY_WOUND_DAMAGE_REDUCTION)
+
+        # Passive damage boost
+        damage_mult = 1.0 + self.get_passive_bonus('damage_mult')
+        base_damage = int(base_damage * damage_mult)
+
+        # Execute passive (bonus damage to low HP enemies)
+        execute_threshold = self.get_passive_bonus('execute_threshold')
+        if execute_threshold > 0 and target_hp_ratio < execute_threshold:
+            execute_mult = self.get_passive_bonus('execute_mult')
+            base_damage = int(base_damage * execute_mult)
+
+        # Active buff damage bonuses
+        for buff in self.active_buffs:
+            if 'damage_mult_bonus' in buff.get('effects', {}):
+                base_damage = int(base_damage * (1 + buff['effects']['damage_mult_bonus']))
 
         # Crit check
         crit_chance = self.get_crit_chance()
@@ -121,7 +147,10 @@ class Agent(PhysicsBody):
         if self.char_class == 'assassin':
             base_dodge += 0.05
 
-        return min(0.4, base_dodge)
+        # Passive skill bonus
+        base_dodge += self.get_passive_bonus('dodge_chance')
+
+        return min(0.5, base_dodge)
 
     def get_crit_chance(self) -> float:
         """Calculate crit chance from luck."""
@@ -132,7 +161,10 @@ class Agent(PhysicsBody):
         if self.char_class == 'assassin':
             base_crit += 0.1
 
-        return min(0.4, base_crit)
+        # Passive skill bonus
+        base_crit += self.get_passive_bonus('crit_chance')
+
+        return min(0.5, base_crit)
 
     def get_learning_modifier(self) -> float:
         """Get modifier for Q-learning rate."""
@@ -235,9 +267,18 @@ class Agent(PhysicsBody):
         if random.random() < self.get_dodge_chance():
             return 0
 
-        # Damage reduction
+        # Damage reduction (base + passive)
         reduction = self.get_damage_reduction()
-        actual_damage = int(amount * (1 - reduction))
+        reduction += self.get_passive_bonus('damage_reduction')
+        reduction = min(0.75, reduction)  # Cap at 75%
+
+        # Active buff damage taken multipliers
+        damage_taken_mult = 1.0
+        for buff in self.active_buffs:
+            if 'damage_taken_mult' in buff.get('effects', {}):
+                damage_taken_mult *= buff['effects']['damage_taken_mult']
+
+        actual_damage = int(amount * (1 - reduction) * damage_taken_mult)
         actual_damage = min(actual_damage, self.hp)
 
         self.hp -= actual_damage
@@ -246,6 +287,11 @@ class Agent(PhysicsBody):
         if self.hp <= 0 and self.race == 'undead' and self.undying_available:
             self.hp = 1
             self.undying_available = False
+
+        # Second Wind passive - survive fatal hit once per floor
+        if self.hp <= 0 and self.second_wind_available:
+            self.hp = 1
+            self.second_wind_available = False
 
         return actual_damage
 
@@ -278,6 +324,18 @@ class Agent(PhysicsBody):
         self.undying_available = (self.race == 'undead')
         self.divine_heal_pending = False
         self.clear_wounds()
+
+        # Reset skill state
+        self.active_buffs = []
+        self.regen_counter = 0
+        self.second_wind_available = any(
+            s.skill_id == 'second_wind' for s in self.passive_skills
+        )
+        for skill in self.active_skills:
+            skill.cooldown_remaining = 0
+        for skill in self.passive_skills:
+            skill.reset_for_floor()
+
         self.reset_for_floor()
 
     def end_floor(self, cleared: bool):
@@ -320,11 +378,16 @@ class Agent(PhysicsBody):
             'intelligence': self.intelligence,
             'agility': self.agility,
             'defense': self.defense,
-            'luck': self.luck
+            'luck': self.luck,
+            'active_skills': [s.to_dict() for s in self.active_skills],
+            'passive_skills': [s.to_dict() for s in self.passive_skills],
+            'unlocked_training': list(self.unlocked_training)
         }
 
     def load_stats_dict(self, data: dict):
         """Load agent stats."""
+        from systems.skills import Skill
+
         self.race = data.get('race', 'human')
         self.char_class = data.get('char_class', 'knight')
         self.name = data.get('name', 'Climber')
@@ -335,3 +398,168 @@ class Agent(PhysicsBody):
         self.agility = data.get('agility', AGENT_BASE_AGILITY)
         self.defense = data.get('defense', AGENT_BASE_DEFENSE)
         self.luck = data.get('luck', AGENT_BASE_LUCK)
+
+        # Load skills
+        self.active_skills = []
+        for skill_data in data.get('active_skills', []):
+            try:
+                self.active_skills.append(Skill.from_dict(skill_data))
+            except KeyError:
+                pass  # Skip invalid skills
+
+        self.passive_skills = []
+        for skill_data in data.get('passive_skills', []):
+            try:
+                self.passive_skills.append(Skill.from_dict(skill_data))
+            except KeyError:
+                pass  # Skip invalid skills
+
+        # Load training unlocks
+        self.unlocked_training = set(data.get('unlocked_training', []))
+
+    def get_passive_bonus(self, stat: str) -> float:
+        """Get total bonus from passive skills for a given stat."""
+        total = 0.0
+        for skill in self.passive_skills:
+            if skill.data.get('effect') == 'stat_bonus':
+                if skill.data.get('stat') == stat:
+                    total += skill.data.get('value', 0)
+            elif skill.data.get('effect') == 'conditional_damage':
+                # Execute passive
+                if stat == 'execute_threshold':
+                    total = max(total, skill.data.get('hp_threshold', 0))
+                elif stat == 'execute_mult':
+                    total = max(total, skill.data.get('damage_mult', 1.0))
+        return total
+
+    def add_skill(self, skill) -> bool:
+        """Add a skill to the agent. Returns True if successful."""
+        from systems.skills import SKILL_TYPE_ACTIVE
+
+        if skill.skill_type == SKILL_TYPE_ACTIVE:
+            if len(self.active_skills) >= MAX_ACTIVE_SKILLS:
+                return False
+            # Check for duplicates
+            if any(s.skill_id == skill.skill_id for s in self.active_skills):
+                return False
+            self.active_skills.append(skill)
+        else:
+            if len(self.passive_skills) >= MAX_PASSIVE_SKILLS:
+                return False
+            # Check for duplicates
+            if any(s.skill_id == skill.skill_id for s in self.passive_skills):
+                return False
+            self.passive_skills.append(skill)
+            # Check for second wind
+            if skill.skill_id == 'second_wind':
+                self.second_wind_available = True
+        return True
+
+    def remove_skill(self, skill_id: str, skill_type: str) -> bool:
+        """Remove a skill by ID. Returns True if removed."""
+        from systems.skills import SKILL_TYPE_ACTIVE
+
+        if skill_type == SKILL_TYPE_ACTIVE:
+            for i, skill in enumerate(self.active_skills):
+                if skill.skill_id == skill_id:
+                    self.active_skills.pop(i)
+                    return True
+        else:
+            for i, skill in enumerate(self.passive_skills):
+                if skill.skill_id == skill_id:
+                    self.passive_skills.pop(i)
+                    return True
+        return False
+
+    def remove_random_passive(self) -> str:
+        """Remove a random passive skill. Returns the skill name or None."""
+        import random
+        if not self.passive_skills:
+            return None
+        skill = random.choice(self.passive_skills)
+        self.passive_skills.remove(skill)
+        return skill.name
+
+    def reduce_random_stat(self) -> str:
+        """Reduce a random stat by 1. Returns the stat name or None."""
+        import random
+
+        # Find stats above their base that can be reduced
+        reducible = []
+        if self.strength > AGENT_BASE_STRENGTH:
+            reducible.append('strength')
+        if self.intelligence > AGENT_BASE_INTELLIGENCE:
+            reducible.append('intelligence')
+        if self.agility > AGENT_BASE_AGILITY:
+            reducible.append('agility')
+        if self.defense > AGENT_BASE_DEFENSE:
+            reducible.append('defense')
+        if self.luck > AGENT_BASE_LUCK:
+            reducible.append('luck')
+
+        if not reducible:
+            return None
+
+        stat = random.choice(reducible)
+        if stat == 'strength':
+            self.strength -= 1
+        elif stat == 'intelligence':
+            self.intelligence -= 1
+        elif stat == 'agility':
+            self.agility -= 1
+        elif stat == 'defense':
+            self.defense -= 1
+        elif stat == 'luck':
+            self.luck -= 1
+
+        return stat
+
+    def unlock_training(self, stat: str):
+        """Unlock training for a stat."""
+        self.unlocked_training.add(stat)
+
+    def is_training_unlocked(self, stat: str) -> bool:
+        """Check if training is unlocked for a stat."""
+        return stat in self.unlocked_training
+
+    def update_skill_cooldowns(self):
+        """Update cooldowns for all active skills."""
+        for skill in self.active_skills:
+            skill.update_cooldown()
+
+    def update_buffs(self):
+        """Update active buff durations."""
+        for buff in self.active_buffs[:]:  # Copy list to allow removal
+            buff['frames_remaining'] -= 1
+            if buff['frames_remaining'] <= 0:
+                self.active_buffs.remove(buff)
+
+    def update_regen(self):
+        """Update HP regeneration from passive skills."""
+        for skill in self.passive_skills:
+            if skill.data.get('effect') == 'regen':
+                self.regen_counter += 1
+                tick_frames = skill.data.get('tick_frames', 120)
+                if self.regen_counter >= tick_frames:
+                    self.regen_counter = 0
+                    hp_heal = skill.data.get('hp_per_tick', 1)
+                    self.heal(hp_heal)
+                break  # Only one regen at a time
+
+    def get_lifesteal_percent(self) -> float:
+        """Get lifesteal percentage from passive skills."""
+        for skill in self.passive_skills:
+            if skill.data.get('effect') == 'on_hit':
+                return skill.data.get('heal_percent', 0)
+        return 0
+
+    def get_thorns_percent(self) -> float:
+        """Get thorns reflection percentage from passive skills."""
+        for skill in self.passive_skills:
+            if skill.data.get('effect') == 'on_hit_taken':
+                return skill.data.get('reflect_percent', 0)
+        return 0
+
+    def get_drop_rate_bonus(self) -> float:
+        """Get drop rate bonus from passive skills."""
+        return self.get_passive_bonus('drop_rate_bonus')

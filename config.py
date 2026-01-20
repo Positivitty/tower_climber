@@ -145,6 +145,8 @@ STATE_COMBAT = 'combat'
 STATE_POST_FLOOR = 'post_floor'
 STATE_GAME_OVER = 'game_over'
 STATE_TRAINING = 'training'
+STATE_DEATH_ROLL = 'death_roll'
+STATE_SKILLS = 'skills'
 
 # Mini-game settings
 MINIGAME_DURATION_FRAMES = 300  # 5 seconds at 60 FPS (longer to watch)
@@ -157,3 +159,18 @@ AI_THINK_DELAY_FRAMES = 30  # Pause between AI thoughts
 
 # Save file
 SAVE_FILE = 'tower_climber_save.json'
+
+# Skill system
+SKILL_DROP_BASE_CHANCE = 0.01  # 1% base drop chance
+SKILL_DROP_MAX_CHANCE = 0.05   # 5% max
+SKILL_DROP_LUCK_SCALING = 0.002  # +0.2% per luck point above 5
+MAX_ACTIVE_SKILLS = 3
+MAX_PASSIVE_SKILLS = 5
+
+# Training unlock items
+TRAINING_UNLOCK_DROP_CHANCE = 0.15  # 15% per enemy
+
+# Death penalty
+DEATH_ROLL_PENALTY_THRESHOLD = 4  # Roll 1-4 = penalty
+DICE_ROLL_FRAMES = 120  # 2 seconds of rolling animation
+DICE_RESULT_DISPLAY_FRAMES = 90  # 1.5 seconds to show result

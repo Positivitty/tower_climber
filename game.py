@@ -4,12 +4,14 @@ import pygame
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, DECISION_TICK_FRAMES,
     STATE_BASE, STATE_COMBAT, STATE_POST_FLOOR, STATE_TRAINING,
+    STATE_DEATH_ROLL, STATE_SKILLS,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
     ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
     MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
-    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y
+    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y,
+    COLOR_ORANGE, COLOR_PURPLE
 )
 from systems.particles import ParticleSystem
 from entities.agent import Agent
@@ -20,10 +22,11 @@ from ai.dialogue import AIDialogue
 from systems.combat import CombatSystem
 from systems.training import TrainingSystem
 from systems.persistence import save_game, load_game, save_exists
-from systems.minigames import create_minigame
+from systems.minigames import create_minigame, DeathRollAnimation
 from systems.character import (
     RACES, CLASSES, Equipment, generate_loot,
-    apply_race_class_bonuses, get_character_color
+    apply_race_class_bonuses, get_character_color,
+    TrainingUnlockItem, TRAINING_UNLOCK_ITEMS
 )
 from ui.renderer import Renderer
 
@@ -65,6 +68,16 @@ class Game:
         self.post_floor_selection = 0  # 0 = continue, 1 = return to base
         self.floor_cleared = False
         self.pending_loot = []
+        self.pending_skills = []
+        self.pending_training_unlocks = []
+
+        # Death roll state
+        self.death_roll = None
+        self.death_penalty_applied = False
+
+        # Skills menu state
+        self.skills_menu_tab = 0  # 0 = active, 1 = passive
+        self.skills_menu_selection = 0
 
         # Initialize systems
         self.renderer = Renderer(self.screen)
@@ -333,6 +346,11 @@ class Game:
         # Update particle system
         self.particle_system.update()
 
+        # Update skill cooldowns and buffs
+        self.agent.update_skill_cooldowns()
+        self.agent.update_buffs()
+        self.agent.update_regen()
+
         # Spawn stun stars if agent is stunned
         if self.agent.is_stunned() and self.agent.stunned % 30 == 0:
             self.particle_system.spawn_stun_stars(self.agent.x, self.agent.y)
@@ -449,21 +467,45 @@ class Game:
         self.agent.end_floor(floor_cleared)
         self.player_teaching = False  # Reset teaching mode
 
+        # Reset loot
+        self.pending_loot = []
+        self.pending_skills = []
+        self.pending_training_unlocks = []
+
         if floor_cleared:
             self.ai_dialogue.add_thought(f"Floor {self.current_floor} CLEARED!")
-            # Generate loot
-            self.pending_loot = []
+            # Generate loot from all enemies
             for enemy in self.enemies:
-                self.pending_loot.extend(generate_loot(self.current_floor, enemy.enemy_type))
-            if self.pending_loot:
-                self.ai_dialogue.add_thought(f"Found {len(self.pending_loot)} item(s)!")
-            self.current_floor += 1
-        else:
-            self.ai_dialogue.add_thought("Defeated! Returning to base...")
-            self.pending_loot = []
+                loot = generate_loot(
+                    self.current_floor, enemy.enemy_type,
+                    agent_luck=self.agent.get_total_stat('luck'),
+                    agent_unlocked_training=self.agent.unlocked_training
+                )
+                self.pending_loot.extend(loot['items'])
+                self.pending_skills.extend(loot['skills'])
+                self.pending_training_unlocks.extend(loot['training_unlocks'])
 
-        self.post_floor_selection = 0
-        self.state = STATE_POST_FLOOR
+            # Announce loot
+            total_items = len(self.pending_loot) + len(self.pending_skills) + len(self.pending_training_unlocks)
+            if total_items > 0:
+                self.ai_dialogue.add_thought(f"Found {total_items} item(s)!")
+            if self.pending_skills:
+                for skill in self.pending_skills:
+                    self.ai_dialogue.add_thought(f"SKILL FOUND: {skill.name}!")
+            if self.pending_training_unlocks:
+                for unlock in self.pending_training_unlocks:
+                    self.ai_dialogue.add_thought(f"UNLOCK FOUND: {unlock.name}!")
+
+            self.current_floor += 1
+            self.post_floor_selection = 0
+            self.state = STATE_POST_FLOOR
+        else:
+            self.ai_dialogue.add_thought("Defeated! Rolling for penalty...")
+            # Start death roll
+            self.death_roll = DeathRollAnimation()
+            self.death_penalty_applied = False
+            self.state = STATE_DEATH_ROLL
+
         self._save_game()
 
     def _update_post_floor(self):
@@ -524,6 +566,12 @@ class Game:
                 elif self.state == STATE_AI_BRAIN:
                     if event.key == pygame.K_ESCAPE:
                         self.state = STATE_BASE
+                elif self.state == STATE_DEATH_ROLL:
+                    # Any key skips to result if rolling is done
+                    if self.death_roll and not self.death_roll.rolling:
+                        self._finish_death_roll()
+                elif self.state == STATE_SKILLS:
+                    self._handle_skills_input(event.key)
 
     def _handle_char_create_input(self, key):
         if key == pygame.K_UP:
@@ -538,11 +586,11 @@ class Game:
             self._create_character()
 
     def _handle_base_input(self, key):
-        # Arrow key navigation
+        # Arrow key navigation (6 menu options now)
         if key == pygame.K_UP:
-            self.base_menu_selection = (self.base_menu_selection - 1) % 5
+            self.base_menu_selection = (self.base_menu_selection - 1) % 6
         elif key == pygame.K_DOWN:
-            self.base_menu_selection = (self.base_menu_selection + 1) % 5
+            self.base_menu_selection = (self.base_menu_selection + 1) % 6
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
             # Execute selected option
             if self.base_menu_selection == 0:
@@ -552,10 +600,14 @@ class Game:
                 self.equipment_submenu = False
                 self.equipment_menu_selection = 0
             elif self.base_menu_selection == 2:
-                self.state = STATE_AI_PRIORITY
+                self.state = STATE_SKILLS
+                self.skills_menu_tab = 0
+                self.skills_menu_selection = 0
             elif self.base_menu_selection == 3:
-                self.state = STATE_AI_BRAIN
+                self.state = STATE_AI_PRIORITY
             elif self.base_menu_selection == 4:
+                self.state = STATE_AI_BRAIN
+            elif self.base_menu_selection == 5:
                 self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
                 self.agent.start_new_climb()
                 self._start_floor()
@@ -567,10 +619,14 @@ class Game:
             self.equipment_submenu = False
             self.equipment_menu_selection = 0
         elif key == pygame.K_3:
-            self.state = STATE_AI_PRIORITY
+            self.state = STATE_SKILLS
+            self.skills_menu_tab = 0
+            self.skills_menu_selection = 0
         elif key == pygame.K_4:
-            self.state = STATE_AI_BRAIN
+            self.state = STATE_AI_PRIORITY
         elif key == pygame.K_5:
+            self.state = STATE_AI_BRAIN
+        elif key == pygame.K_6:
             self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
             self.agent.start_new_climb()
             self._start_floor()
@@ -583,7 +639,12 @@ class Game:
             self.train_menu_selection = (self.train_menu_selection + 1) % len(stats)
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
             stat = stats[self.train_menu_selection]
-            self._start_training(stat)
+            # Check if training is unlocked
+            if self.agent.is_training_unlocked(stat):
+                self._start_training(stat)
+            else:
+                item_name = TRAINING_UNLOCK_ITEMS[stat]['name']
+                self.ai_dialogue.add_thought(f"Training locked! Need to find: {item_name}")
         elif key == pygame.K_ESCAPE:
             self.state = STATE_BASE
 
@@ -634,11 +695,25 @@ class Game:
         if key == pygame.K_UP or key == pygame.K_DOWN:
             self.post_floor_selection = 1 - self.post_floor_selection
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
-            # Handle loot first
+            # Handle equipment loot
             for item in self.pending_loot:
                 self.agent.equipment.equip(item)
                 self.ai_dialogue.add_thought(f"Equipped: {item.name}")
             self.pending_loot = []
+
+            # Handle skill drops
+            for skill in self.pending_skills:
+                if self.agent.add_skill(skill):
+                    self.ai_dialogue.add_thought(f"Learned: {skill.name}!")
+                else:
+                    self.ai_dialogue.add_thought(f"Can't learn {skill.name} (full)")
+            self.pending_skills = []
+
+            # Handle training unlocks
+            for unlock in self.pending_training_unlocks:
+                self.agent.unlock_training(unlock.stat)
+                self.ai_dialogue.add_thought(f"Unlocked {unlock.stat.upper()} training!")
+            self.pending_training_unlocks = []
 
             if self.post_floor_selection == 0 and self.floor_cleared:
                 # Continue climbing
@@ -660,6 +735,10 @@ class Game:
             self._update_training()
         elif self.state == STATE_POST_FLOOR:
             self._update_post_floor()
+        elif self.state == STATE_DEATH_ROLL:
+            self._update_death_roll()
+        elif self.state == STATE_SKILLS:
+            pass  # Handled by events
         elif self.state == STATE_TRAIN_SELECT:
             pass  # Handled by events
         elif self.state == STATE_EQUIPMENT:
@@ -682,6 +761,10 @@ class Game:
             self._render_training()
         elif self.state == STATE_POST_FLOOR:
             self._render_post_floor()
+        elif self.state == STATE_DEATH_ROLL:
+            self._render_death_roll()
+        elif self.state == STATE_SKILLS:
+            self._render_skills()
         elif self.state == STATE_TRAIN_SELECT:
             self._render_train_select()
         elif self.state == STATE_EQUIPMENT:
@@ -755,14 +838,17 @@ class Game:
 
         # Base menu options
         menu_y = 220
-        options = ["Train Stats", "Equipment", "AI Strategy", "AI Brain", "Start Climb"]
+        options = ["Train Stats", "Equipment", "Skills", "AI Strategy", "AI Brain", "Start Climb"]
         self.renderer.draw_text("What would you like to do?", SCREEN_WIDTH // 2, menu_y, COLOR_WHITE, 'medium', center=True)
         for i, label in enumerate(options):
             color = COLOR_YELLOW if i == self.base_menu_selection else COLOR_GREEN
             prefix = "> " if i == self.base_menu_selection else "  "
             self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 30 + i * 22, color, 'small', center=True)
 
-        self.renderer.draw_text(f"AI Priority: {self.ai_priority.upper()}", SCREEN_WIDTH // 2, 370, COLOR_CYAN, 'small', center=True)
+        # Show skill counts
+        active_count = len(self.agent.active_skills)
+        passive_count = len(self.agent.passive_skills)
+        self.renderer.draw_text(f"Skills: {active_count} active, {passive_count} passive", SCREEN_WIDTH // 2, 370, COLOR_PURPLE, 'small', center=True)
 
     def _render_combat(self):
         self.renderer.draw_ground()
@@ -843,15 +929,30 @@ class Game:
             self.renderer.draw_text("DEFEATED", SCREEN_WIDTH // 2, 60, COLOR_RED, 'large', center=True)
 
         # Show loot
-        if self.pending_loot:
-            self.renderer.draw_text("Loot Found:", SCREEN_WIDTH // 2, 110, COLOR_YELLOW, 'medium', center=True)
-            y = 140
+        y = 100
+        has_loot = self.pending_loot or self.pending_skills or self.pending_training_unlocks
+        if has_loot:
+            self.renderer.draw_text("Loot Found:", SCREEN_WIDTH // 2, y, COLOR_YELLOW, 'medium', center=True)
+            y += 25
+
+            # Equipment
             for item in self.pending_loot:
                 self.renderer.draw_text(item.get_description(), SCREEN_WIDTH // 2, y, item.get_color(), 'small', center=True)
-                y += 25
+                y += 20
+
+            # Skills
+            for skill in self.pending_skills:
+                skill_type = "Active" if skill.skill_type == 'active' else "Passive"
+                self.renderer.draw_text(f"[{skill_type}] {skill.name} - {skill.description}", SCREEN_WIDTH // 2, y, skill.get_color(), 'small', center=True)
+                y += 20
+
+            # Training unlocks
+            for unlock in self.pending_training_unlocks:
+                self.renderer.draw_text(f"[Unlock] {unlock.name} - {unlock.description}", SCREEN_WIDTH // 2, y, unlock.color, 'small', center=True)
+                y += 20
 
         # Options
-        options_y = 220
+        options_y = max(220, y + 20)
         options = ["Continue Climbing", "Return to Base"]
         if not self.floor_cleared:
             options[0] = "(Cannot continue)"
@@ -881,11 +982,19 @@ class Game:
         y = 130
         for i, stat in enumerate(stats):
             current_val = self.agent.get_stat(stat)
+            is_unlocked = self.agent.is_training_unlocked(stat)
             color = COLOR_YELLOW if i == self.train_menu_selection else COLOR_WHITE
+            if not is_unlocked:
+                color = COLOR_RED if i == self.train_menu_selection else COLOR_DARK_GRAY
             prefix = ">" if i == self.train_menu_selection else " "
-            self.renderer.draw_text(f"{prefix} {stat.upper()}: {current_val}", SCREEN_WIDTH // 2 - 80, y, color, 'medium')
+            lock_indicator = "" if is_unlocked else " [LOCKED]"
+            self.renderer.draw_text(f"{prefix} {stat.upper()}: {current_val}{lock_indicator}", SCREEN_WIDTH // 2 - 80, y, color, 'medium')
             if i == self.train_menu_selection:
-                self.renderer.draw_text(stat_descriptions[stat], SCREEN_WIDTH // 2, y + 22, COLOR_GREEN, 'small', center=True)
+                if is_unlocked:
+                    self.renderer.draw_text(stat_descriptions[stat], SCREEN_WIDTH // 2, y + 22, COLOR_GREEN, 'small', center=True)
+                else:
+                    item_name = TRAINING_UNLOCK_ITEMS[stat]['name']
+                    self.renderer.draw_text(f"Find '{item_name}' to unlock", SCREEN_WIDTH // 2, y + 22, COLOR_ORANGE, 'small', center=True)
             y += 45 if i == self.train_menu_selection else 30
 
         self.renderer.draw_text("UP/DOWN to select, ENTER to train, ESC to go back", SCREEN_WIDTH // 2, 350, COLOR_WHITE, 'small', center=True)
@@ -1010,6 +1119,160 @@ class Game:
             self.renderer.draw_text("(No lessons learned yet - keep fighting!)", SCREEN_WIDTH // 2, y, COLOR_WHITE, 'small', center=True)
 
         self.renderer.draw_text("Press ESC to go back", SCREEN_WIDTH // 2, 380, COLOR_WHITE, 'small', center=True)
+
+    def _update_death_roll(self):
+        """Update death roll animation."""
+        if self.death_roll is None:
+            self.state = STATE_BASE
+            return
+
+        finished = self.death_roll.update()
+        if finished and not self.death_penalty_applied:
+            self._finish_death_roll()
+
+    def _finish_death_roll(self):
+        """Process death roll result."""
+        if self.death_penalty_applied:
+            return
+
+        self.death_penalty_applied = True
+
+        if self.death_roll.has_penalty():
+            self._apply_death_penalty()
+        else:
+            self.ai_dialogue.add_thought(f"Rolled {self.death_roll.final_result}! Safe - no penalty!")
+
+        # Go to base
+        self.state = STATE_BASE
+        self.ai_dialogue.think_about_base(self.agent, self.q_agent.epsilon)
+
+    def _apply_death_penalty(self):
+        """Apply death penalty - lose stat or passive skill."""
+        import random
+
+        roll = self.death_roll.final_result
+        self.ai_dialogue.add_thought(f"Rolled {roll}! Penalty time...")
+
+        # 50% chance each
+        if random.random() < 0.5:
+            # Lose stat point
+            lost_stat = self.agent.reduce_random_stat()
+            if lost_stat:
+                self.ai_dialogue.add_thought(f"Lost 1 {lost_stat.upper()} point!")
+            else:
+                self.ai_dialogue.add_thought("No stats to lose - lucky!")
+        else:
+            # Lose passive skill
+            lost_skill = self.agent.remove_random_passive()
+            if lost_skill:
+                self.ai_dialogue.add_thought(f"Lost skill: {lost_skill}!")
+            else:
+                self.ai_dialogue.add_thought("No passive skills to lose - lucky!")
+
+        self._save_game()
+
+    def _render_death_roll(self):
+        """Render death roll animation."""
+        self.renderer.draw_text("DEATH PENALTY ROLL", SCREEN_WIDTH // 2, 60, COLOR_RED, 'large', center=True)
+
+        if self.death_roll is None:
+            return
+
+        data = self.death_roll.get_visual_data()
+
+        # Draw dice
+        dice_x = SCREEN_WIDTH // 2
+        dice_y = SCREEN_HEIGHT // 2 - 50
+        dice_size = 80
+
+        # Dice background
+        dice_color = COLOR_YELLOW if data['rolling'] else COLOR_WHITE
+        pygame.draw.rect(self.screen, dice_color,
+                         (dice_x - dice_size // 2, dice_y - dice_size // 2, dice_size, dice_size),
+                         0 if not data['rolling'] else 3)
+        pygame.draw.rect(self.screen, COLOR_WHITE,
+                         (dice_x - dice_size // 2, dice_y - dice_size // 2, dice_size, dice_size), 2)
+
+        # Dice face number
+        face = data['current_face']
+        face_color = COLOR_RED if data['rolling'] else (COLOR_RED if face <= 4 else COLOR_GREEN)
+        self.renderer.draw_text(str(face), dice_x, dice_y, face_color, 'large', center=True)
+
+        # Status text
+        if data['rolling']:
+            self.renderer.draw_text("Rolling...", SCREEN_WIDTH // 2, dice_y + 60, COLOR_YELLOW, 'medium', center=True)
+        else:
+            if data['has_penalty']:
+                self.renderer.draw_text(f"Rolled {data['final_result']} - PENALTY!", SCREEN_WIDTH // 2, dice_y + 60, COLOR_RED, 'medium', center=True)
+            else:
+                self.renderer.draw_text(f"Rolled {data['final_result']} - SAFE!", SCREEN_WIDTH // 2, dice_y + 60, COLOR_GREEN, 'medium', center=True)
+            self.renderer.draw_text("Press any key to continue", SCREEN_WIDTH // 2, dice_y + 100, COLOR_WHITE, 'small', center=True)
+
+        # Threshold info
+        self.renderer.draw_text("Roll 1-4 = Penalty  |  Roll 5-6 = Safe", SCREEN_WIDTH // 2, 350, COLOR_WHITE, 'small', center=True)
+
+    def _handle_skills_input(self, key):
+        """Handle skills menu input."""
+        from config import MAX_ACTIVE_SKILLS, MAX_PASSIVE_SKILLS
+
+        if key == pygame.K_LEFT or key == pygame.K_RIGHT:
+            self.skills_menu_tab = 1 - self.skills_menu_tab
+            self.skills_menu_selection = 0
+        elif key == pygame.K_UP:
+            skills = self.agent.active_skills if self.skills_menu_tab == 0 else self.agent.passive_skills
+            if skills:
+                self.skills_menu_selection = (self.skills_menu_selection - 1) % len(skills)
+        elif key == pygame.K_DOWN:
+            skills = self.agent.active_skills if self.skills_menu_tab == 0 else self.agent.passive_skills
+            if skills:
+                self.skills_menu_selection = (self.skills_menu_selection + 1) % len(skills)
+        elif key == pygame.K_ESCAPE:
+            self.state = STATE_BASE
+
+    def _render_skills(self):
+        """Render skills menu."""
+        from config import MAX_ACTIVE_SKILLS, MAX_PASSIVE_SKILLS
+        from systems.skills import SKILL_RARITY_COLORS
+
+        self.renderer.draw_text("SKILLS", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
+
+        # Tabs
+        tab_y = 80
+        active_color = COLOR_YELLOW if self.skills_menu_tab == 0 else COLOR_WHITE
+        passive_color = COLOR_YELLOW if self.skills_menu_tab == 1 else COLOR_WHITE
+        self.renderer.draw_text(f"[Active ({len(self.agent.active_skills)}/{MAX_ACTIVE_SKILLS})]", SCREEN_WIDTH // 2 - 100, tab_y, active_color, 'medium', center=True)
+        self.renderer.draw_text(f"[Passive ({len(self.agent.passive_skills)}/{MAX_PASSIVE_SKILLS})]", SCREEN_WIDTH // 2 + 100, tab_y, passive_color, 'medium', center=True)
+
+        # Skills list
+        y = 120
+        skills = self.agent.active_skills if self.skills_menu_tab == 0 else self.agent.passive_skills
+
+        if not skills:
+            self.renderer.draw_text("(No skills yet - find some in battle!)", SCREEN_WIDTH // 2, y + 40, COLOR_WHITE, 'small', center=True)
+        else:
+            for i, skill in enumerate(skills):
+                is_selected = i == self.skills_menu_selection
+                prefix = ">" if is_selected else " "
+                name_color = COLOR_YELLOW if is_selected else skill.get_color()
+
+                self.renderer.draw_text(f"{prefix} {skill.name}", SCREEN_WIDTH // 2, y, name_color, 'medium', center=True)
+                y += 22
+
+                if is_selected:
+                    self.renderer.draw_text(f"({skill.rarity})", SCREEN_WIDTH // 2, y, skill.get_color(), 'small', center=True)
+                    y += 18
+                    self.renderer.draw_text(skill.description, SCREEN_WIDTH // 2, y, COLOR_GREEN, 'small', center=True)
+                    y += 25
+
+                    # Show cooldown for active skills
+                    if skill.skill_type == 'active':
+                        cooldown_sec = skill.data.get('cooldown_frames', 0) / 60
+                        self.renderer.draw_text(f"Cooldown: {cooldown_sec:.1f}s", SCREEN_WIDTH // 2, y, COLOR_CYAN, 'small', center=True)
+                        y += 20
+
+                y += 5
+
+        self.renderer.draw_text("LEFT/RIGHT: Switch tabs | UP/DOWN: Select | ESC: Back", SCREEN_WIDTH // 2, 360, COLOR_WHITE, 'small', center=True)
 
     def run(self):
         while self.running:

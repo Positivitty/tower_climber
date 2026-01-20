@@ -106,6 +106,8 @@ class CombatSystem:
                     self.damage_taken_this_tick += actual_damage
                     self.pending_rewards += REWARD_DAMAGE_TAKEN
 
+                    # Note: Thorns doesn't reflect projectile damage (only melee)
+
                 projectile.active = False
 
         # Remove inactive projectiles
@@ -152,6 +154,14 @@ class CombatSystem:
 
                         self.damage_dealt_this_tick += actual_damage
                         self.pending_rewards += REWARD_DAMAGE_DEALT
+
+                        # Apply lifesteal from passive skill
+                        if agent:
+                            lifesteal_percent = agent.get_lifesteal_percent()
+                            if lifesteal_percent > 0:
+                                heal_amount = int(actual_damage * lifesteal_percent)
+                                if heal_amount > 0:
+                                    agent.heal(heal_amount)
 
                         if not enemy.is_alive():
                             self.enemies_defeated_this_tick += 1
@@ -209,6 +219,13 @@ class CombatSystem:
                     self.pending_rewards += REWARD_DAMAGE_DEALT
                     self.last_hit_body_part = body_part
 
+                    # Apply lifesteal from passive skill
+                    lifesteal_percent = agent.get_lifesteal_percent()
+                    if lifesteal_percent > 0:
+                        heal_amount = int(actual_damage * lifesteal_percent)
+                        if heal_amount > 0:
+                            agent.heal(heal_amount)
+
                     # Check if enemy defeated
                     if not enemy.is_alive():
                         self.enemies_defeated_this_tick += 1
@@ -262,6 +279,17 @@ class CombatSystem:
 
                     self.damage_taken_this_tick += actual_damage
                     self.pending_rewards += REWARD_DAMAGE_TAKEN
+
+                    # Apply thorns damage reflection
+                    thorns_percent = agent.get_thorns_percent()
+                    if thorns_percent > 0:
+                        thorns_damage = int(actual_damage * thorns_percent)
+                        if thorns_damage > 0:
+                            enemy.take_damage(thorns_damage)
+                            # Check if enemy defeated by thorns
+                            if not enemy.is_alive():
+                                self.enemies_defeated_this_tick += 1
+                                self.pending_rewards += REWARD_ENEMY_DEFEATED
 
     def check_floor_cleared(self, enemies: list) -> bool:
         """Check if all enemies are defeated."""

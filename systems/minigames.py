@@ -4,7 +4,8 @@ import random
 from config import (
     MINIGAME_DURATION_FRAMES,
     REWARD_TRAINING_SUCCESS, REWARD_TRAINING_FAIL, REWARD_MINIGAME_PERFECT,
-    ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT
+    ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
+    DICE_ROLL_FRAMES, DICE_RESULT_DISPLAY_FRAMES, DEATH_ROLL_PENALTY_THRESHOLD
 )
 
 
@@ -454,3 +455,69 @@ def create_minigame(stat: str, difficulty: int = 1) -> MiniGame:
     }
     game_class = games.get(stat, TimingBarGame)
     return game_class(stat, difficulty)
+
+
+class DeathRollAnimation:
+    """Dice roll animation for death penalty determination."""
+
+    def __init__(self):
+        self.frame = 0
+        self.rolling = True
+        self.current_face = 1
+        self.final_result = None
+        self.roll_speed = 3  # Change face every N frames
+
+        # Phases
+        self.roll_frames = DICE_ROLL_FRAMES
+        self.result_frames = DICE_RESULT_DISPLAY_FRAMES
+
+        self.finished = False
+        self.penalty_applied = False
+        self.penalty_message = None
+
+    def update(self) -> bool:
+        """Update the animation. Returns True when completely finished."""
+        self.frame += 1
+
+        if self.rolling:
+            # Roll animation - change face rapidly
+            if self.frame % self.roll_speed == 0:
+                self.current_face = random.randint(1, 6)
+
+            # Slow down near the end
+            if self.frame > self.roll_frames * 0.7:
+                self.roll_speed = 6
+            if self.frame > self.roll_frames * 0.85:
+                self.roll_speed = 10
+
+            # Stop rolling
+            if self.frame >= self.roll_frames:
+                self.rolling = False
+                self.final_result = random.randint(1, 6)
+                self.current_face = self.final_result
+                self.frame = 0  # Reset for result display phase
+
+        else:
+            # Result display phase
+            if self.frame >= self.result_frames:
+                self.finished = True
+
+        return self.finished
+
+    def has_penalty(self) -> bool:
+        """Check if the roll results in a penalty."""
+        if self.final_result is None:
+            return False
+        return self.final_result <= DEATH_ROLL_PENALTY_THRESHOLD
+
+    def get_visual_data(self) -> dict:
+        """Get data for rendering."""
+        return {
+            'rolling': self.rolling,
+            'current_face': self.current_face,
+            'final_result': self.final_result,
+            'has_penalty': self.has_penalty() if self.final_result else None,
+            'penalty_message': self.penalty_message,
+            'finished': self.finished,
+            'progress': self.frame / self.roll_frames if self.rolling else 1.0
+        }

@@ -1,6 +1,10 @@
 """Character system - races, classes, and items."""
 
 import random
+from config import (
+    SKILL_DROP_BASE_CHANCE, SKILL_DROP_MAX_CHANCE, SKILL_DROP_LUCK_SCALING,
+    TRAINING_UNLOCK_DROP_CHANCE, AGENT_BASE_LUCK
+)
 
 
 # Race definitions
@@ -102,6 +106,45 @@ WEAPON_NAMES = ['Sword', 'Axe', 'Dagger', 'Staff', 'Mace', 'Spear', 'Bow', 'Claw
 ARMOR_NAMES = ['Plate', 'Mail', 'Leather', 'Robe', 'Scale', 'Hide']
 ACCESSORY_NAMES = ['Ring', 'Amulet', 'Bracelet', 'Belt', 'Cloak', 'Charm']
 PREFIXES = ['Mighty', 'Swift', 'Wise', 'Lucky', 'Ancient', 'Cursed', 'Blessed', 'Dark', 'Light', 'Burning', 'Frozen']
+
+# Training unlock items
+TRAINING_UNLOCK_ITEMS = {
+    'strength': {
+        'name': 'Training Dummy',
+        'description': 'A worn practice dummy. Unlocks Strength training.',
+        'stat': 'strength',
+        'min_floor': 1,
+        'color': (180, 140, 100)
+    },
+    'intelligence': {
+        'name': 'Spell Tome',
+        'description': 'An ancient book of arcane knowledge. Unlocks Intelligence training.',
+        'stat': 'intelligence',
+        'min_floor': 2,
+        'color': (100, 100, 200)
+    },
+    'agility': {
+        'name': 'Swift Boots',
+        'description': 'Lightweight boots that enhance mobility. Unlocks Agility training.',
+        'stat': 'agility',
+        'min_floor': 1,
+        'color': (100, 200, 100)
+    },
+    'defense': {
+        'name': 'Iron Shield',
+        'description': 'A sturdy training shield. Unlocks Defense training.',
+        'stat': 'defense',
+        'min_floor': 2,
+        'color': (150, 150, 180)
+    },
+    'luck': {
+        'name': 'Lucky Coin',
+        'description': 'A mystical coin that glows faintly. Unlocks Luck training.',
+        'stat': 'luck',
+        'min_floor': 3,
+        'color': (255, 215, 0)
+    }
+}
 
 
 class Item:
@@ -259,11 +302,51 @@ class Equipment:
         return eq
 
 
-def generate_loot(floor_level: int, enemy_type: str = 'melee') -> list:
-    """Generate random loot drops."""
-    drops = []
+class TrainingUnlockItem:
+    """An item that unlocks training for a specific stat."""
 
-    # Drop chance based on floor
+    def __init__(self, stat: str):
+        self.stat = stat
+        data = TRAINING_UNLOCK_ITEMS[stat]
+        self.name = data['name']
+        self.description = data['description']
+        self.color = data['color']
+
+    def to_dict(self) -> dict:
+        return {
+            'stat': self.stat,
+            'name': self.name
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'TrainingUnlockItem':
+        return cls(data['stat'])
+
+
+def generate_loot(floor_level: int, enemy_type: str = 'melee',
+                  agent_luck: int = None, agent_unlocked_training: set = None) -> dict:
+    """Generate random loot drops.
+
+    Returns dict with:
+        items: list of Item objects
+        skills: list of Skill objects
+        training_unlocks: list of TrainingUnlockItem objects
+    """
+    from systems.skills import generate_random_skill
+
+    result = {
+        'items': [],
+        'skills': [],
+        'training_unlocks': []
+    }
+
+    # Default values
+    if agent_luck is None:
+        agent_luck = AGENT_BASE_LUCK
+    if agent_unlocked_training is None:
+        agent_unlocked_training = set()
+
+    # Equipment drop chance based on floor
     drop_chance = 0.3 + floor_level * 0.02
 
     if random.random() < drop_chance:
@@ -273,9 +356,31 @@ def generate_loot(floor_level: int, enemy_type: str = 'melee') -> list:
         else:
             item_type = random.choice(['weapon', 'accessory'])
 
-        drops.append(Item(item_type, floor_level))
+        result['items'].append(Item(item_type, floor_level))
 
-    return drops
+    # Skill drop chance (luck-scaled)
+    luck_bonus = (agent_luck - AGENT_BASE_LUCK) * SKILL_DROP_LUCK_SCALING
+    skill_chance = min(SKILL_DROP_MAX_CHANCE, SKILL_DROP_BASE_CHANCE + luck_bonus)
+
+    if random.random() < skill_chance:
+        skill = generate_random_skill(floor_level)
+        if skill:
+            result['skills'].append(skill)
+
+    # Training unlock drop
+    if random.random() < TRAINING_UNLOCK_DROP_CHANCE:
+        # Find unlocks not yet obtained and eligible for this floor
+        eligible = []
+        for stat, data in TRAINING_UNLOCK_ITEMS.items():
+            if stat not in agent_unlocked_training:
+                if floor_level >= data['min_floor']:
+                    eligible.append(stat)
+
+        if eligible:
+            chosen_stat = random.choice(eligible)
+            result['training_unlocks'].append(TrainingUnlockItem(chosen_stat))
+
+    return result
 
 
 def apply_race_class_bonuses(agent, race: str, char_class: str):
