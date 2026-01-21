@@ -13,7 +13,13 @@ from config import (
     ATTACK_COOLDOWN_FRAMES, SPRITE_AGENT_PRIMARY,
     BODY_PART_HEAD, BODY_PART_BODY, BODY_PART_LEGS,
     BODY_WOUND_DAMAGE_REDUCTION, LEGS_WOUND_SPEED_REDUCTION,
-    MAX_ACTIVE_SKILLS, MAX_PASSIVE_SKILLS
+    MAX_ACTIVE_SKILLS, MAX_PASSIVE_SKILLS,
+    MAX_STAMINA, STAMINA_REGEN_RATE, STAMINA_REGEN_DELAY_FRAMES,
+    DODGE_DURATION_FRAMES, DODGE_COOLDOWN_FRAMES, DODGE_STAMINA_COST, DODGE_DISTANCE,
+    PARRY_WINDOW_FRAMES, PARRY_COOLDOWN_FRAMES, PARRY_STAMINA_COST,
+    PARRY_DAMAGE_REDUCTION, PARRY_COUNTER_WINDOW_FRAMES,
+    JUMP_FORCE, JUMP_STAMINA_COST,
+    HEIGHT_LEVEL_GROUND, HEIGHT_LEVEL_LOW, HEIGHT_LEVEL_MID, HEIGHT_LEVEL_HIGH
 )
 
 
@@ -82,6 +88,27 @@ class Agent(PhysicsBody):
 
         # Status effects (from elemental damage)
         self.status_effects = StatusEffectManager()
+
+        # Stamina system
+        self.stamina = MAX_STAMINA
+        self.stamina_regen_delay = 0
+
+        # Dodge state
+        self.is_dodging = False
+        self.dodge_timer = 0
+        self.dodge_direction = 0
+        self.dodge_cooldown = 0
+        self.invincible = False  # i-frames
+
+        # Parry state
+        self.is_parrying = False
+        self.parry_timer = 0
+        self.parry_cooldown = 0
+        self.parry_success = False
+        self.counter_window = 0
+
+        # Platform/jump state
+        self.current_platform = None
 
     def get_total_stat(self, stat: str) -> int:
         """Get stat including equipment bonuses."""
@@ -222,8 +249,116 @@ class Agent(PhysicsBody):
             self.vx = speed
             self.facing = 1
 
-    def update(self):
-        self.update_physics()
+    # === Stamina System ===
+
+    def can_dodge(self) -> bool:
+        """Check if agent can perform a dodge."""
+        return (self.dodge_cooldown <= 0 and
+                self.stamina >= DODGE_STAMINA_COST and
+                not self.is_dodging and
+                not self.is_parrying and
+                not self.is_attacking)
+
+    def start_dodge(self, direction: int):
+        """Start dodge roll in direction (-1 left, 1 right)."""
+        if self.can_dodge():
+            self.is_dodging = True
+            self.dodge_timer = DODGE_DURATION_FRAMES
+            self.dodge_direction = direction
+            self.dodge_cooldown = DODGE_COOLDOWN_FRAMES
+            self.stamina -= DODGE_STAMINA_COST
+            self.stamina_regen_delay = STAMINA_REGEN_DELAY_FRAMES
+            self.invincible = True
+            self.facing = direction
+            # Apply dodge velocity
+            self.vx = direction * DODGE_DISTANCE / DODGE_DURATION_FRAMES
+
+    def can_parry(self) -> bool:
+        """Check if agent can perform a parry."""
+        return (self.parry_cooldown <= 0 and
+                self.stamina >= PARRY_STAMINA_COST and
+                not self.is_dodging and
+                not self.is_parrying and
+                not self.is_attacking)
+
+    def start_parry(self):
+        """Start parry stance."""
+        if self.can_parry():
+            self.is_parrying = True
+            self.parry_timer = PARRY_WINDOW_FRAMES
+            self.parry_cooldown = PARRY_COOLDOWN_FRAMES
+            self.stamina -= PARRY_STAMINA_COST
+            self.stamina_regen_delay = STAMINA_REGEN_DELAY_FRAMES
+            self.parry_success = False
+            self.vx = 0  # Stop moving while parrying
+
+    def on_parry_success(self):
+        """Called when successfully parrying an attack."""
+        self.parry_success = True
+        self.counter_window = PARRY_COUNTER_WINDOW_FRAMES
+
+    def can_jump(self) -> bool:
+        """Check if agent can jump."""
+        return (self.grounded and
+                self.stamina >= JUMP_STAMINA_COST and
+                not self.is_dodging and
+                not self.is_parrying)
+
+    def jump(self):
+        """Perform a jump."""
+        if self.can_jump():
+            self.vy = JUMP_FORCE
+            self.grounded = False
+            self.stamina -= JUMP_STAMINA_COST
+            self.stamina_regen_delay = STAMINA_REGEN_DELAY_FRAMES
+            self.current_platform = None
+
+    def update_stamina(self):
+        """Update stamina regeneration."""
+        if self.stamina_regen_delay > 0:
+            self.stamina_regen_delay -= 1
+        elif self.stamina < MAX_STAMINA:
+            self.stamina = min(MAX_STAMINA, self.stamina + STAMINA_REGEN_RATE)
+
+    def update_dodge(self):
+        """Update dodge state."""
+        if self.is_dodging:
+            self.dodge_timer -= 1
+            if self.dodge_timer <= 0:
+                self.is_dodging = False
+                self.invincible = False
+                self.vx = 0
+
+        if self.dodge_cooldown > 0:
+            self.dodge_cooldown -= 1
+
+    def update_parry(self):
+        """Update parry state."""
+        if self.is_parrying:
+            self.parry_timer -= 1
+            if self.parry_timer <= 0:
+                self.is_parrying = False
+
+        if self.counter_window > 0:
+            self.counter_window -= 1
+
+        if self.parry_cooldown > 0:
+            self.parry_cooldown -= 1
+
+    def get_height_level(self) -> int:
+        """Get discretized height level for state encoding."""
+        height_above_ground = GROUND_Y - self.y
+        if height_above_ground < 50:
+            return HEIGHT_LEVEL_GROUND
+        elif height_above_ground < 150:
+            return HEIGHT_LEVEL_LOW
+        elif height_above_ground < 250:
+            return HEIGHT_LEVEL_MID
+        else:
+            return HEIGHT_LEVEL_HIGH
+
+    def update(self, terrain_manager=None):
+        self.update_physics(terrain_manager)
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
         if self.attack_timer > 0:
@@ -234,6 +369,11 @@ class Agent(PhysicsBody):
         # Update stun timer
         if self.stunned > 0:
             self.stunned -= 1
+
+        # Update stamina, dodge, and parry
+        self.update_stamina()
+        self.update_dodge()
+        self.update_parry()
 
         # Update status effects (burn, freeze, poison)
         self.status_effects.update(self)
@@ -270,7 +410,16 @@ class Agent(PhysicsBody):
     def take_damage(self, amount: int) -> int:
         import random
 
-        # Dodge check
+        # Check for i-frames (dodge invincibility)
+        if self.invincible:
+            return 0
+
+        # Check for active parry
+        if self.is_parrying:
+            self.on_parry_success()
+            amount = int(amount * (1 - PARRY_DAMAGE_REDUCTION))
+
+        # Passive dodge check
         if random.random() < self.get_dodge_chance():
             return 0
 
@@ -319,6 +468,26 @@ class Agent(PhysicsBody):
         self.vx = 0
         self.vy = 0
         self.grounded = True
+
+        # Reset stamina
+        self.stamina = MAX_STAMINA
+        self.stamina_regen_delay = 0
+
+        # Reset dodge state
+        self.is_dodging = False
+        self.dodge_timer = 0
+        self.dodge_cooldown = 0
+        self.invincible = False
+
+        # Reset parry state
+        self.is_parrying = False
+        self.parry_timer = 0
+        self.parry_cooldown = 0
+        self.parry_success = False
+        self.counter_window = 0
+
+        # Reset platform
+        self.current_platform = None
 
         # Clear status effects (burn, freeze, poison)
         self.status_effects.clear_with_removal(self)

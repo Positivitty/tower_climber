@@ -3,10 +3,13 @@
 from config import (
     ATTACK_RANGE, KNOCKBACK_FORCE,
     REWARD_DAMAGE_DEALT, REWARD_ENEMY_DEFEATED, REWARD_FLOOR_CLEARED,
-    REWARD_DAMAGE_TAKEN, REWARD_DEATH,
+    REWARD_DAMAGE_TAKEN, REWARD_DEATH, REWARD_HIGH_GROUND_KILL,
+    REWARD_SUCCESSFUL_PARRY, REWARD_PARRY_COUNTER,
     BODY_PART_HEAD, BODY_PART_BODY, BODY_PART_LEGS,
     HEAD_DAMAGE_MULT, BODY_DAMAGE_MULT, LEGS_DAMAGE_MULT,
-    WOUND_THRESHOLD
+    WOUND_THRESHOLD,
+    HIGH_GROUND_DAMAGE_BONUS, LOW_GROUND_DAMAGE_PENALTY,
+    PARRY_COUNTER_DAMAGE_MULT
 )
 from entities.projectile import Projectile
 from systems.status_effects import create_effect
@@ -39,6 +42,18 @@ class CombatSystem:
         self.damage_dealt_this_tick = 0
         self.damage_taken_this_tick = 0
         self.last_hit_body_part = None  # Track last hit for effects
+        self.parry_success_this_tick = False
+        self.counter_attack_this_tick = False
+
+    def _calculate_height_modifier(self, attacker, defender) -> float:
+        """Calculate damage modifier based on relative heights."""
+        height_diff = defender.y - attacker.y  # Positive if attacker is higher
+
+        if height_diff > 30:  # Attacker has high ground
+            return 1.0 + HIGH_GROUND_DAMAGE_BONUS
+        elif height_diff < -30:  # Attacker has low ground
+            return 1.0 - LOW_GROUND_DAMAGE_PENALTY
+        return 1.0
 
     def reset_tick_tracking(self):
         """Reset per-tick tracking variables."""
@@ -46,6 +61,8 @@ class CombatSystem:
         self.enemies_defeated_this_tick = 0
         self.damage_dealt_this_tick = 0
         self.damage_taken_this_tick = 0
+        self.parry_success_this_tick = False
+        self.counter_attack_this_tick = False
 
     def spawn_projectile(self, enemy):
         """Spawn a projectile from a ranged enemy."""
@@ -200,9 +217,20 @@ class CombatSystem:
                 body_part = ATTACK_HEIGHT_TO_BODY_PART.get(agent.attack_height, BODY_PART_BODY)
                 damage_mult = BODY_PART_DAMAGE_MULT.get(body_part, 1.0)
 
-                # Calculate damage with body part multiplier
+                # Apply height modifier
+                height_mod = self._calculate_height_modifier(agent, enemy)
+
+                # Check for counter attack bonus
+                counter_mod = 1.0
+                if hasattr(agent, 'counter_window') and agent.counter_window > 0:
+                    counter_mod = PARRY_COUNTER_DAMAGE_MULT
+                    agent.counter_window = 0  # Consume counter window
+                    self.counter_attack_this_tick = True
+                    self.pending_rewards += REWARD_PARRY_COUNTER
+
+                # Calculate damage with all multipliers
                 base_damage = agent.get_damage()
-                damage = int(base_damage * damage_mult)
+                damage = int(base_damage * damage_mult * height_mod * counter_mod)
                 actual_damage = enemy.take_damage(damage)
 
                 if actual_damage > 0:
@@ -238,6 +266,9 @@ class CombatSystem:
                     if not enemy.is_alive():
                         self.enemies_defeated_this_tick += 1
                         self.pending_rewards += REWARD_ENEMY_DEFEATED
+                        # Bonus for high ground kill
+                        if height_mod > 1.0:
+                            self.pending_rewards += REWARD_HIGH_GROUND_KILL
 
     def process_enemy_attacks(self, agent, enemies: list):
         """Process enemy melee attacks against agent."""
@@ -265,7 +296,16 @@ class CombatSystem:
 
                 base_damage = enemy.get_damage()
                 damage = int(base_damage * damage_mult)
+
+                # Track if agent was parrying before damage
+                was_parrying = hasattr(agent, 'is_parrying') and agent.is_parrying
+
                 actual_damage = agent.take_damage(damage)
+
+                # Check if parry was successful (agent parried and took reduced damage)
+                if was_parrying and hasattr(agent, 'parry_success') and agent.parry_success:
+                    self.parry_success_this_tick = True
+                    self.pending_rewards += REWARD_SUCCESSFUL_PARRY
 
                 if actual_damage > 0:
                     # Apply knockback to agent

@@ -6,6 +6,7 @@ from config import (
     COMBAT_ACTIONS, BASE_ACTIONS, MINIGAME_ACTIONS,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
+    ACTION_DODGE, ACTION_PARRY, ACTION_JUMP,
     ACTION_TRAIN_STRENGTH, ACTION_TRAIN_INTELLIGENCE,
     ACTION_TRAIN_AGILITY, ACTION_TRAIN_DEFENSE, ACTION_TRAIN_LUCK,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
@@ -311,6 +312,12 @@ class QLearningAgent:
                 return "RUN"
             elif action == ACTION_CHARGE:
                 return "CHARGE"
+            elif action == ACTION_DODGE:
+                return "DODGE"
+            elif action == ACTION_PARRY:
+                return "PARRY"
+            elif action == ACTION_JUMP:
+                return "JUMP"
         elif context == 'base':
             names = {
                 ACTION_TRAIN_STRENGTH: "TRAIN STRENGTH",

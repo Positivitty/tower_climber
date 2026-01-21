@@ -101,6 +101,11 @@ REWARD_DEATH = -100
 REWARD_TRAINING_SUCCESS = 10
 REWARD_TRAINING_FAIL = -2
 REWARD_MINIGAME_PERFECT = 20
+REWARD_SUCCESSFUL_DODGE = 8     # Dodged attack that would hit
+REWARD_SUCCESSFUL_PARRY = 12    # Parried incoming attack
+REWARD_PARRY_COUNTER = 15       # Counter-attack after parry
+REWARD_HAZARD_DAMAGE = -5       # Took hazard damage
+REWARD_HIGH_GROUND_KILL = 10    # Kill from elevated position
 
 # Combat Actions
 ACTION_ATTACK_HIGH = 0   # Aim for head - critical damage, can stun
@@ -108,10 +113,89 @@ ACTION_ATTACK_MID = 1    # Aim for body/arms - can disable attacks
 ACTION_ATTACK_LOW = 2    # Aim for legs - can slow enemy
 ACTION_RUN = 3
 ACTION_CHARGE = 4        # Rush toward enemy, closing distance quickly
-COMBAT_ACTIONS = [ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW, ACTION_RUN, ACTION_CHARGE]
+ACTION_DODGE = 5         # Dodge roll with i-frames
+ACTION_PARRY = 6         # Parry incoming attack
+ACTION_JUMP = 7          # Jump to platforms
+COMBAT_ACTIONS = [ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
+                  ACTION_RUN, ACTION_CHARGE, ACTION_DODGE, ACTION_PARRY, ACTION_JUMP]
 
 # Legacy alias for compatibility
 ACTION_ATTACK = ACTION_ATTACK_MID
+
+# Dodge mechanics
+DODGE_DURATION_FRAMES = 12      # i-frames duration (0.2 seconds)
+DODGE_COOLDOWN_FRAMES = 45      # 0.75 seconds between dodges
+DODGE_STAMINA_COST = 25
+DODGE_DISTANCE = 60             # Pixels moved during dodge
+
+# Parry mechanics
+PARRY_WINDOW_FRAMES = 10        # Timing window (0.167 seconds)
+PARRY_COOLDOWN_FRAMES = 60      # 1 second between parries
+PARRY_STAMINA_COST = 15
+PARRY_DAMAGE_REDUCTION = 0.8    # 80% damage reduction on success
+PARRY_COUNTER_WINDOW_FRAMES = 20  # Frames to counter-attack after parry
+PARRY_COUNTER_DAMAGE_MULT = 1.5   # 50% bonus damage on counter
+
+# Stamina system
+MAX_STAMINA = 100
+STAMINA_REGEN_RATE = 1.0        # Per frame when not acting
+STAMINA_REGEN_DELAY_FRAMES = 30 # Delay after action before regen
+
+# Jump mechanics
+JUMP_FORCE = -12                # Initial vertical velocity
+JUMP_STAMINA_COST = 10
+
+# Height advantage
+HIGH_GROUND_DAMAGE_BONUS = 0.15   # +15% damage when above enemy
+LOW_GROUND_DAMAGE_PENALTY = 0.10  # -10% damage when below enemy
+
+# Height levels for state discretization
+HEIGHT_LEVEL_GROUND = 0
+HEIGHT_LEVEL_LOW = 1              # 0-100 pixels above ground
+HEIGHT_LEVEL_MID = 2              # 100-200 pixels above ground
+HEIGHT_LEVEL_HIGH = 3             # 200+ pixels above ground
+
+# Platform types
+PLATFORM_WOODEN = 'wooden'
+PLATFORM_STONE = 'stone'
+PLATFORM_CRUMBLING = 'crumbling'
+
+# Platform dimensions
+PLATFORM_MIN_WIDTH = 80
+PLATFORM_MAX_WIDTH = 200
+PLATFORM_HEIGHT = 15
+PLATFORM_CRUMBLE_TIME = 60  # Frames before crumbling platform breaks
+
+# Platform heights (y positions)
+PLATFORM_HEIGHTS = [350, 280, 200, 130]
+
+# Hazard types
+HAZARD_LAVA = 'lava'
+HAZARD_SPIKES = 'spikes'
+HAZARD_POISON_POOL = 'poison_pool'
+HAZARD_FIRE_GEYSER = 'fire_geyser'
+HAZARD_ICE_PATCH = 'ice_patch'
+
+# Hazard damage/effects
+LAVA_DAMAGE_PER_FRAME = 3
+SPIKE_DAMAGE = 25
+SPIKE_COOLDOWN = 60             # Immunity after hitting spikes
+POISON_POOL_TICK_FRAMES = 30
+FIRE_GEYSER_DAMAGE = 35
+FIRE_GEYSER_INTERVAL = 180      # 3 seconds between eruptions
+FIRE_GEYSER_DURATION = 30       # How long geyser stays active
+ICE_PATCH_FRICTION = 0.5        # Reduced friction (slippery)
+
+# Hazard dimensions
+HAZARD_MIN_WIDTH = 40
+HAZARD_MAX_WIDTH = 120
+
+# Hazard colors
+COLOR_LAVA = (255, 100, 0)
+COLOR_SPIKES = (150, 150, 150)
+COLOR_POISON_POOL = (100, 200, 50)
+COLOR_FIRE_GEYSER = (255, 150, 50)
+COLOR_ICE_PATCH = (180, 220, 255)
 
 # Body parts
 BODY_PART_HEAD = 'head'

@@ -7,13 +7,15 @@ from config import (
     STATE_DEATH_ROLL, STATE_SKILLS,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
+    ACTION_DODGE, ACTION_PARRY, ACTION_JUMP,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
     ATTACK_RANGE, AI_THINK_DELAY_FRAMES, AGENT_CHARGE_SPEED,
     MINIGAME_RESULT_DISPLAY_FRAMES, MINIGAME_AI_DECISION_DELAY,
-    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, GROUND_Y,
+    COLOR_WHITE, COLOR_YELLOW, COLOR_GREEN, COLOR_RED, COLOR_CYAN, COLOR_DARK_GRAY, COLOR_GRAY, GROUND_Y,
     COLOR_ORANGE, COLOR_PURPLE,
     BOSS_FLOOR_INTERVAL, ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
-    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY
+    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
+    REWARD_SUCCESSFUL_DODGE, REWARD_HAZARD_DAMAGE
 )
 from systems.particles import ParticleSystem
 from entities.agent import Agent
@@ -26,6 +28,7 @@ from ai.state import StateEncoder
 from ai.dialogue import AIDialogue
 from systems.combat import CombatSystem
 from systems.training import TrainingSystem
+from systems.terrain import TerrainManager
 from systems.persistence import save_game, load_game, save_exists
 from systems.minigames import create_minigame, DeathRollAnimation
 from systems.character import (
@@ -37,12 +40,14 @@ from ui.renderer import Renderer
 
 
 # Game states
+STATE_MAIN_MENU = 'main_menu'
 STATE_CHAR_CREATE = 'char_create'
 STATE_LOOT = 'loot'
 STATE_TRAIN_SELECT = 'train_select'  # Player picks which stat to train
 STATE_EQUIPMENT = 'equipment'  # Player manages equipment
 STATE_AI_PRIORITY = 'ai_priority'  # Player sets AI combat priority
 STATE_AI_BRAIN = 'ai_brain'  # View AI intelligence and learning
+STATE_CONFIRM_NEW = 'confirm_new'  # Confirm new game (erases save)
 
 
 class Game:
@@ -57,10 +62,15 @@ class Game:
         self.running = True
 
         # Game state
-        self.state = STATE_CHAR_CREATE
+        self.state = STATE_MAIN_MENU
         self.current_floor = 1
         self.decision_tick_counter = 0
         self.ai_think_counter = 0
+
+        # Main menu state
+        self.main_menu_selection = 0
+        self.has_save = save_exists()
+        self.confirm_selection = 0  # 0 = No, 1 = Yes for new game confirm
 
         # Character creation state
         self.selected_race = 0
@@ -90,6 +100,7 @@ class Game:
         self.combat_system = CombatSystem(self.particle_system)
         self.training_system = TrainingSystem()
         self.state_encoder = StateEncoder()
+        self.terrain_manager = TerrainManager()
 
         # Initialize entities
         self.agent = Agent()
@@ -124,14 +135,8 @@ class Game:
         self.player_teaching = False  # Is player controlling AI?
         self.player_action = None  # Action chosen by player
 
-        # Check for existing save
-        if save_exists():
-            self._load_game()
-            self.char_created = True
-            self.state = STATE_BASE
-            self.ai_dialogue.add_thought("Welcome back! Ready to continue climbing.")
-        else:
-            self.ai_dialogue.add_thought("Welcome! Create your character to begin.")
+        # Start at main menu
+        self.ai_dialogue.add_thought("Welcome to Tower Climber!")
 
     def _load_game(self):
         result = load_game(self.agent, self.q_agent)
@@ -277,6 +282,10 @@ class Game:
         self.particle_system.clear()
         self.state_encoder.reset()
         self.q_agent.reset_episode()
+
+        # Generate terrain for this floor
+        self.terrain_manager.generate_for_floor(self.current_floor)
+
         self._spawn_enemies()
         self.decision_tick_counter = 0
         self.state = STATE_COMBAT
@@ -348,6 +357,33 @@ class Game:
                 if self.agent.can_attack():
                     self.agent.start_attack()
 
+        elif action == ACTION_DODGE:
+            # Dodge away from nearest enemy
+            if self.agent.can_dodge():
+                direction = -1 if nearest.x > self.agent.x else 1
+                self.agent.start_dodge(direction)
+                self.ai_dialogue.add_thought("DODGE!")
+
+        elif action == ACTION_PARRY:
+            # Parry incoming attack
+            if self.agent.can_parry():
+                self.agent.start_parry()
+                self.ai_dialogue.add_thought("PARRY!")
+
+        elif action == ACTION_JUMP:
+            # Jump to platform
+            if self.agent.can_jump():
+                self.agent.jump()
+                # Move toward or away from enemy while jumping
+                if nearest:
+                    distance = self.agent.distance_to(nearest)
+                    if distance < 100:
+                        # Too close, jump away
+                        self.agent.move_away_from(nearest.x)
+                    else:
+                        # Jump toward
+                        self.agent.move_toward(nearest.x)
+
     def _update_char_create(self):
         pass  # Handled by events
 
@@ -416,10 +452,24 @@ class Game:
         self.minigame_state = mg_state
 
     def _update_combat(self):
-        self.agent.update()
+        # Update agent and enemies with terrain for platform collision
+        self.agent.update(self.terrain_manager)
         for enemy in self.enemies:
             if enemy.is_alive():
-                enemy.update(self.agent)
+                enemy.update(self.agent, self.terrain_manager)
+
+        # Update terrain (crumbling platforms, geyser timers)
+        all_entities = [self.agent] + [e for e in self.enemies if e.is_alive()]
+        self.terrain_manager.update(all_entities)
+
+        # Apply hazard effects to all entities
+        hazard_damage = self.terrain_manager.apply_hazard_effects(
+            all_entities, self.particle_system
+        )
+        # Track hazard damage for rewards
+        agent_hazard_damage = hazard_damage.get(id(self.agent), 0)
+        if agent_hazard_damage > 0:
+            self.combat_system.pending_rewards += REWARD_HAZARD_DAMAGE
 
         # Process agent attacks - ranged or melee based on weapon
         if self.agent.has_ranged_weapon():
@@ -460,7 +510,7 @@ class Game:
             self._end_floor(floor_cleared)
 
     def _decision_tick(self):
-        new_state = self.state_encoder.encode_state(self.agent, self.enemies)
+        new_state = self.state_encoder.encode_state(self.agent, self.enemies, self.terrain_manager)
 
         if self.current_state is not None:
             floor_cleared = self.combat_system.check_floor_cleared(self.enemies)
@@ -521,19 +571,38 @@ class Game:
                 q_values[ACTION_CHARGE] += 8  # Extra bias for closing distance
             if ACTION_RUN in q_values:
                 q_values[ACTION_RUN] -= 3
+            # Less likely to dodge/parry when aggressive
+            if ACTION_DODGE in q_values:
+                q_values[ACTION_DODGE] -= 2
+            if ACTION_PARRY in q_values:
+                q_values[ACTION_PARRY] -= 2
         elif self.ai_priority == 'defensive':
-            # Run more when HP is low, prefer leg attacks to slow enemies
+            # Prefer defensive actions
             if hp_ratio < 0.5:
                 if ACTION_RUN in q_values:
                     q_values[ACTION_RUN] += 10
+                if ACTION_DODGE in q_values:
+                    q_values[ACTION_DODGE] += 8
+                if ACTION_PARRY in q_values:
+                    q_values[ACTION_PARRY] += 6
                 for atk in attack_actions:
                     if atk in q_values:
                         q_values[atk] -= 5
             elif hp_ratio < 0.75:
                 if ACTION_RUN in q_values:
                     q_values[ACTION_RUN] += 3
+                if ACTION_DODGE in q_values:
+                    q_values[ACTION_DODGE] += 4
+                if ACTION_PARRY in q_values:
+                    q_values[ACTION_PARRY] += 3
                 if ACTION_ATTACK_LOW in q_values:
                     q_values[ACTION_ATTACK_LOW] += 2  # Prefer leg attacks to slow enemies
+            else:
+                # Even at full HP, defensive prefers parry/dodge
+                if ACTION_DODGE in q_values:
+                    q_values[ACTION_DODGE] += 2
+                if ACTION_PARRY in q_values:
+                    q_values[ACTION_PARRY] += 2
         # 'balanced' - no bias, use pure Q-values
 
         # Choose action with highest (biased) Q-value
@@ -542,7 +611,7 @@ class Game:
 
     def _end_floor(self, floor_cleared: bool):
         if self.current_state is not None:
-            final_state = self.state_encoder.encode_state(self.agent, self.enemies)
+            final_state = self.state_encoder.encode_state(self.agent, self.enemies, self.terrain_manager)
             reward = self.combat_system.get_rewards(self.agent, self.enemies, floor_cleared)
             self.q_agent.learn(self.current_state, self.q_agent.last_action, reward,
                                final_state, context='combat', done=True)
@@ -606,7 +675,11 @@ class Game:
                 return
 
             if event.type == pygame.KEYDOWN:
-                if self.state == STATE_CHAR_CREATE:
+                if self.state == STATE_MAIN_MENU:
+                    self._handle_main_menu_input(event.key)
+                elif self.state == STATE_CONFIRM_NEW:
+                    self._handle_confirm_new_input(event.key)
+                elif self.state == STATE_CHAR_CREATE:
                     self._handle_char_create_input(event.key)
                 elif self.state == STATE_POST_FLOOR:
                     self._handle_post_floor_input(event.key)
@@ -619,7 +692,7 @@ class Game:
                     elif event.key == pygame.K_t:
                         self.player_teaching = not self.player_teaching
                         if self.player_teaching:
-                            self.ai_dialogue.add_thought("Teaching mode ON - 1:High 2:Mid 3:Low R:Run C:Charge")
+                            self.ai_dialogue.add_thought("Teaching: 1-3:Attack R:Run C:Charge D:Dodge P:Parry J:Jump")
                         else:
                             self.ai_dialogue.add_thought("Teaching mode OFF - AI decides")
                     elif self.player_teaching:
@@ -641,6 +714,15 @@ class Game:
                         elif event.key == pygame.K_c:
                             self.player_action = ACTION_CHARGE
                             self.ai_dialogue.add_thought("Player: CHARGE!")
+                        elif event.key == pygame.K_d:
+                            self.player_action = ACTION_DODGE
+                            self.ai_dialogue.add_thought("Player: DODGE!")
+                        elif event.key == pygame.K_p:
+                            self.player_action = ACTION_PARRY
+                            self.ai_dialogue.add_thought("Player: PARRY!")
+                        elif event.key == pygame.K_j:
+                            self.player_action = ACTION_JUMP
+                            self.ai_dialogue.add_thought("Player: JUMP!")
                 elif self.state == STATE_TRAINING:
                     if event.key == pygame.K_ESCAPE:
                         self.current_minigame = None
@@ -661,6 +743,68 @@ class Game:
                 elif self.state == STATE_SKILLS:
                     self._handle_skills_input(event.key)
 
+    def _handle_main_menu_input(self, key):
+        # Menu options depend on whether save exists
+        if self.has_save:
+            num_options = 3  # Continue, New Game, Quit
+        else:
+            num_options = 2  # New Game, Quit
+
+        if key == pygame.K_UP:
+            self.main_menu_selection = (self.main_menu_selection - 1) % num_options
+        elif key == pygame.K_DOWN:
+            self.main_menu_selection = (self.main_menu_selection + 1) % num_options
+        elif key in (pygame.K_RETURN, pygame.K_SPACE):
+            if self.has_save:
+                if self.main_menu_selection == 0:  # Continue
+                    self._load_game()
+                    self.char_created = True
+                    self.state = STATE_BASE
+                    self.ai_dialogue.add_thought("Welcome back! Ready to continue climbing.")
+                elif self.main_menu_selection == 1:  # New Game
+                    self.state = STATE_CONFIRM_NEW
+                    self.confirm_selection = 0
+                elif self.main_menu_selection == 2:  # Quit
+                    self.running = False
+            else:
+                if self.main_menu_selection == 0:  # New Game
+                    self.state = STATE_CHAR_CREATE
+                    self.ai_dialogue.add_thought("Create your character to begin!")
+                elif self.main_menu_selection == 1:  # Quit
+                    self.running = False
+        elif key == pygame.K_ESCAPE:
+            self.running = False
+
+    def _handle_confirm_new_input(self, key):
+        if key == pygame.K_LEFT or key == pygame.K_RIGHT:
+            self.confirm_selection = 1 - self.confirm_selection
+        elif key in (pygame.K_RETURN, pygame.K_SPACE):
+            if self.confirm_selection == 1:  # Yes, start new game
+                self._delete_save()
+                self._reset_game_state()
+                self.state = STATE_CHAR_CREATE
+                self.ai_dialogue.add_thought("Starting fresh! Create your character.")
+            else:  # No, go back
+                self.state = STATE_MAIN_MENU
+        elif key == pygame.K_ESCAPE:
+            self.state = STATE_MAIN_MENU
+
+    def _delete_save(self):
+        """Delete the save file."""
+        from systems.persistence import SAVE_FILE
+        import os
+        if os.path.exists(SAVE_FILE):
+            os.remove(SAVE_FILE)
+        self.has_save = False
+
+    def _reset_game_state(self):
+        """Reset game state for a new game."""
+        self.current_floor = 1
+        self.agent = Agent()
+        self.agent.equipment = Equipment()
+        self.q_agent = QLearningAgent()
+        self.char_created = False
+
     def _handle_char_create_input(self, key):
         if key == pygame.K_UP:
             self.selected_race = (self.selected_race - 1) % len(self.race_list)
@@ -672,6 +816,8 @@ class Game:
             self.selected_class = (self.selected_class + 1) % len(self.class_list)
         elif key in (pygame.K_RETURN, pygame.K_SPACE):
             self._create_character()
+        elif key == pygame.K_ESCAPE:
+            self.state = STATE_MAIN_MENU
 
     def _handle_base_input(self, key):
         # Arrow key navigation (6 menu options now)
@@ -839,7 +985,11 @@ class Game:
     def _render(self):
         self.renderer.clear()
 
-        if self.state == STATE_CHAR_CREATE:
+        if self.state == STATE_MAIN_MENU:
+            self._render_main_menu()
+        elif self.state == STATE_CONFIRM_NEW:
+            self._render_confirm_new()
+        elif self.state == STATE_CHAR_CREATE:
             self._render_char_create()
         elif self.state == STATE_BASE:
             self._render_base()
@@ -866,6 +1016,72 @@ class Game:
         self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
 
         pygame.display.flip()
+
+    def _render_main_menu(self):
+        # Title
+        self.renderer.draw_text("TOWER CLIMBER", SCREEN_WIDTH // 2, 80,
+                                COLOR_YELLOW, 'large', center=True)
+        self.renderer.draw_text("AI Adventure", SCREEN_WIDTH // 2, 115,
+                                COLOR_WHITE, 'medium', center=True)
+
+        # Draw a simple tower graphic
+        tower_x = SCREEN_WIDTH // 2
+        tower_y = 200
+        # Tower base
+        pygame.draw.rect(self.screen, (80, 60, 40), (tower_x - 40, tower_y, 80, 120))
+        # Tower top
+        pygame.draw.polygon(self.screen, (100, 80, 60), [
+            (tower_x - 50, tower_y),
+            (tower_x, tower_y - 40),
+            (tower_x + 50, tower_y)
+        ])
+        # Windows
+        for i in range(3):
+            pygame.draw.rect(self.screen, COLOR_YELLOW, (tower_x - 15, tower_y + 20 + i * 35, 30, 20))
+        # Door
+        pygame.draw.rect(self.screen, (60, 40, 20), (tower_x - 15, tower_y + 90, 30, 30))
+
+        # Menu options
+        menu_y = 350
+        if self.has_save:
+            options = ["Continue", "New Game", "Quit"]
+        else:
+            options = ["New Game", "Quit"]
+
+        for i, option in enumerate(options):
+            color = COLOR_YELLOW if i == self.main_menu_selection else COLOR_WHITE
+            prefix = "> " if i == self.main_menu_selection else "  "
+            self.renderer.draw_text(f"{prefix}{option}", SCREEN_WIDTH // 2, menu_y + i * 35,
+                                    color, 'medium', center=True)
+
+        # Controls hint
+        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2, 480,
+                                COLOR_GRAY, 'small', center=True)
+
+    def _render_confirm_new(self):
+        self.renderer.draw_text("START NEW GAME?", SCREEN_WIDTH // 2, 100,
+                                COLOR_YELLOW, 'large', center=True)
+
+        self.renderer.draw_text("This will erase your current save!", SCREEN_WIDTH // 2, 160,
+                                COLOR_RED, 'medium', center=True)
+
+        # Show what will be lost
+        if self.has_save:
+            self.renderer.draw_text(f"Current progress: Floor {self.current_floor}", SCREEN_WIDTH // 2, 200,
+                                    COLOR_WHITE, 'small', center=True)
+
+        # Yes/No buttons
+        btn_y = 280
+        no_color = COLOR_YELLOW if self.confirm_selection == 0 else COLOR_WHITE
+        yes_color = COLOR_YELLOW if self.confirm_selection == 1 else COLOR_WHITE
+
+        self.renderer.draw_text("[ No, go back ]", SCREEN_WIDTH // 2 - 100, btn_y,
+                                no_color, 'medium', center=True)
+        self.renderer.draw_text("[ Yes, start fresh ]", SCREEN_WIDTH // 2 + 100, btn_y,
+                                yes_color, 'medium', center=True)
+
+        self.renderer.draw_text("LEFT/RIGHT to select, ENTER to confirm", SCREEN_WIDTH // 2, 350,
+                                COLOR_GRAY, 'small', center=True)
 
     def _render_char_create(self):
         self.renderer.draw_text("CREATE YOUR CHARACTER", SCREEN_WIDTH // 2, 40,
@@ -940,6 +1156,11 @@ class Game:
 
     def _render_combat(self):
         self.renderer.draw_ground()
+
+        # Draw terrain (platforms and hazards)
+        self.renderer.draw_platforms(self.terrain_manager)
+        self.renderer.draw_hazards(self.terrain_manager)
+
         self.renderer.draw_agent(self.agent)
         for enemy in self.enemies:
             self.renderer.draw_enemy(enemy)
@@ -952,6 +1173,10 @@ class Game:
         self.renderer.draw_floor_info(self.current_floor)
         self.renderer.draw_agent_stats_compact(self.agent)
 
+        # Draw stamina bar and dodge/parry status
+        self.renderer.draw_stamina_bar(self.agent)
+        self.renderer.draw_dodge_parry_status(self.agent)
+
         # Show wound status for agent
         wounds = [p for p, w in self.agent.wounds.items() if w]
         if wounds:
@@ -960,7 +1185,7 @@ class Game:
 
         # Show teaching mode hint
         if self.player_teaching:
-            self.renderer.draw_text("TEACHING: 1:Head 2:Body 3:Legs R:Run C:Charge", SCREEN_WIDTH // 2, 20, COLOR_YELLOW, 'small', center=True)
+            self.renderer.draw_text("TEACHING: 1-3:Attack R:Run C:Charge D:Dodge P:Parry J:Jump", SCREEN_WIDTH // 2, 20, COLOR_YELLOW, 'small', center=True)
         else:
             self.renderer.draw_text("Press T to teach AI", SCREEN_WIDTH // 2, 20, COLOR_WHITE, 'small', center=True)
 
@@ -1371,3 +1596,8 @@ class Game:
 
         self._save_game()
         pygame.quit()
+
+
+if __name__ == "__main__":
+    game = Game()
+    game.run()

@@ -114,7 +114,7 @@ class Enemy(PhysicsBody):
         """Update enemy AI behavior based on agent position."""
         raise NotImplementedError("Subclasses must implement update_ai")
 
-    def update(self, agent):
+    def update(self, agent, terrain_manager=None):
         """Update enemy state each frame."""
         # Update status effects
         self.status_effects.update(self)
@@ -130,7 +130,7 @@ class Enemy(PhysicsBody):
             self.vx = 0  # Can't move while stunned
 
         # Update physics
-        self.update_physics()
+        self.update_physics(terrain_manager)
 
         # Update attack cooldown
         if self.attack_cooldown > 0:

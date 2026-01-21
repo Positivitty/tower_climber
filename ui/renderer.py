@@ -4,12 +4,17 @@ import pygame
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, GROUND_Y,
     COLOR_WHITE, COLOR_BLACK, COLOR_GRAY, COLOR_DARK_GRAY,
-    COLOR_GREEN, COLOR_RED, COLOR_YELLOW, COLOR_BLUE,
+    COLOR_GREEN, COLOR_RED, COLOR_YELLOW, COLOR_BLUE, COLOR_CYAN,
     SPRITE_AGENT_PRIMARY, SPRITE_AGENT_SECONDARY,
     SPRITE_ENEMY_PRIMARY, SPRITE_ENEMY_SECONDARY,
     COLOR_TANK, COLOR_ASSASSIN, COLOR_BOSS,
     COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
-    ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON
+    ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
+    PLATFORM_WOODEN, PLATFORM_STONE, PLATFORM_CRUMBLING,
+    HAZARD_LAVA, HAZARD_SPIKES, HAZARD_POISON_POOL,
+    HAZARD_FIRE_GEYSER, HAZARD_ICE_PATCH,
+    COLOR_LAVA, COLOR_SPIKES, COLOR_POISON_POOL, COLOR_ICE_PATCH,
+    MAX_STAMINA
 )
 
 
@@ -530,3 +535,182 @@ class Renderer:
         pygame.draw.line(self.screen, COLOR_RED,
                          (x + size, indicator_y - size),
                          (x - size, indicator_y + size), 2)
+
+    def draw_platforms(self, terrain_manager):
+        """Draw all platforms."""
+        for platform in terrain_manager.platforms:
+            if not platform.active:
+                continue
+
+            x, y, width, height = int(platform.x), int(platform.y), platform.width, platform.height
+
+            # Determine color based on platform type
+            if platform.platform_type == PLATFORM_WOODEN:
+                top_color = (139, 90, 43)  # Brown
+                side_color = (101, 67, 33)  # Darker brown
+            elif platform.platform_type == PLATFORM_STONE:
+                top_color = (128, 128, 128)  # Gray
+                side_color = (96, 96, 96)  # Darker gray
+            elif platform.platform_type == PLATFORM_CRUMBLING:
+                # Fade based on crumble timer
+                fade = platform.crumble_timer / 60.0 if platform.entity_on_platform else 0
+                r = int(139 * (1 - fade * 0.5))
+                g = int(90 * (1 - fade * 0.5))
+                b = int(43 * (1 - fade * 0.5))
+                top_color = (r, g, b)
+                side_color = (r - 30, g - 20, b - 10)
+            else:
+                top_color = (139, 90, 43)
+                side_color = (101, 67, 33)
+
+            # Draw platform side (depth)
+            pygame.draw.rect(self.screen, side_color, (x, y, width, height + 5))
+
+            # Draw platform top
+            pygame.draw.rect(self.screen, top_color, (x, y - 3, width, height))
+
+            # Draw edge highlight
+            pygame.draw.line(self.screen, (180, 140, 90), (x, y - 3), (x + width, y - 3), 2)
+
+            # Draw crumbling cracks if applicable
+            if platform.platform_type == PLATFORM_CRUMBLING and platform.entity_on_platform:
+                crack_count = int(platform.crumble_timer / 20) + 1
+                for i in range(min(crack_count, 5)):
+                    crack_x = x + 20 + i * (width - 40) // 5
+                    pygame.draw.line(self.screen, (60, 40, 20),
+                                     (crack_x, y - 2), (crack_x + 5, y + height), 1)
+
+    def draw_hazards(self, terrain_manager):
+        """Draw all hazards."""
+        for hazard in terrain_manager.hazards:
+            if not hazard.active:
+                continue
+
+            x, y = int(hazard.x), int(hazard.y)
+            width, height = hazard.width, hazard.height
+
+            if hazard.hazard_type == HAZARD_LAVA:
+                # Animated lava with bubbling effect
+                pygame.draw.rect(self.screen, COLOR_LAVA, (x, y - height, width, height))
+                # Bubbles
+                import random
+                random.seed(int(hazard.x) + pygame.time.get_ticks() // 200)
+                for _ in range(3):
+                    bx = x + random.randint(5, width - 5)
+                    by = y - random.randint(5, height - 5)
+                    pygame.draw.circle(self.screen, (255, 200, 50), (bx, by), 3)
+                # Glow on top
+                pygame.draw.line(self.screen, (255, 200, 100), (x, y - height), (x + width, y - height), 2)
+
+            elif hazard.hazard_type == HAZARD_SPIKES:
+                # Draw triangular spikes
+                spike_width = 12
+                num_spikes = width // spike_width
+                for i in range(num_spikes):
+                    sx = x + i * spike_width
+                    points = [
+                        (sx, y),
+                        (sx + spike_width // 2, y - height - 10),
+                        (sx + spike_width, y)
+                    ]
+                    pygame.draw.polygon(self.screen, COLOR_SPIKES, points)
+                    # Highlight
+                    pygame.draw.line(self.screen, (180, 180, 180),
+                                     points[0], points[1], 1)
+
+            elif hazard.hazard_type == HAZARD_POISON_POOL:
+                # Green bubbling pool
+                pygame.draw.rect(self.screen, COLOR_POISON_POOL, (x, y - height, width, height))
+                # Bubbles
+                import random
+                random.seed(int(hazard.x) + pygame.time.get_ticks() // 300)
+                for _ in range(2):
+                    bx = x + random.randint(5, width - 5)
+                    by = y - random.randint(3, height - 3)
+                    pygame.draw.circle(self.screen, (150, 255, 100), (bx, by), 2)
+
+            elif hazard.hazard_type == HAZARD_ICE_PATCH:
+                # Translucent ice
+                pygame.draw.rect(self.screen, COLOR_ICE_PATCH, (x, y - 5, width, 8))
+                # Shine highlights
+                pygame.draw.line(self.screen, (220, 240, 255),
+                                 (x + 5, y - 3), (x + width // 3, y - 3), 2)
+                pygame.draw.line(self.screen, (220, 240, 255),
+                                 (x + width // 2, y - 2), (x + width - 10, y - 2), 1)
+
+            elif hazard.hazard_type == HAZARD_FIRE_GEYSER:
+                # Base vent
+                vent_width = 30
+                vent_x = x + width // 2 - vent_width // 2
+                pygame.draw.rect(self.screen, (80, 60, 40), (vent_x, y - 10, vent_width, 10))
+                pygame.draw.arc(self.screen, (60, 40, 20),
+                                (vent_x - 5, y - 15, vent_width + 10, 15), 0, 3.14, 3)
+
+                # Fire column when active
+                if hazard.geyser_active:
+                    flame_height = 100
+                    for i in range(5):
+                        flame_x = vent_x + 5 + i * 5
+                        flame_w = 8
+                        alpha = 1.0 - i * 0.15
+                        color = (int(255 * alpha), int(150 * alpha), 0)
+                        pygame.draw.rect(self.screen, color,
+                                         (flame_x, y - flame_height, flame_w, flame_height - 10))
+                    # Glow at base
+                    pygame.draw.circle(self.screen, (255, 200, 50),
+                                       (vent_x + vent_width // 2, y - 10), 15)
+                else:
+                    # Smoke/steam when inactive
+                    import random
+                    random.seed(int(hazard.geyser_timer))
+                    for _ in range(2):
+                        sx = vent_x + vent_width // 2 + random.randint(-5, 5)
+                        sy = y - 15 - random.randint(5, 20)
+                        pygame.draw.circle(self.screen, (100, 100, 100), (sx, sy), 3)
+
+    def draw_stamina_bar(self, agent):
+        """Draw stamina bar below HP bar."""
+        panel_x = SCREEN_WIDTH - 210
+        bar_x = panel_x + 10
+        bar_y = 58  # Below HP bar
+        bar_width = 180
+        bar_height = 8
+
+        # Background
+        pygame.draw.rect(self.screen, (40, 40, 40), (bar_x, bar_y, bar_width, bar_height))
+
+        # Stamina fill (yellow)
+        stamina_ratio = agent.stamina / MAX_STAMINA
+        pygame.draw.rect(self.screen, COLOR_YELLOW, (bar_x, bar_y, int(bar_width * stamina_ratio), bar_height))
+
+        # Border
+        pygame.draw.rect(self.screen, COLOR_GRAY, (bar_x, bar_y, bar_width, bar_height), 1)
+
+        # Label
+        self.draw_text("STA", bar_x - 25, bar_y + 4, COLOR_YELLOW, 'small', center=True)
+
+    def draw_dodge_parry_status(self, agent):
+        """Draw dodge/parry cooldown and active status indicators."""
+        status_x = SCREEN_WIDTH - 200
+        status_y = 70
+
+        # Dodge status
+        if agent.is_dodging:
+            self.draw_text("DODGING", status_x, status_y, COLOR_CYAN, 'small')
+        elif agent.dodge_cooldown > 0:
+            cd_pct = agent.dodge_cooldown / 45  # DODGE_COOLDOWN_FRAMES
+            self.draw_text(f"Dodge CD: {int(cd_pct * 100)}%", status_x, status_y, COLOR_GRAY, 'small')
+
+        # Parry status
+        status_y += 15
+        if agent.is_parrying:
+            self.draw_text("PARRYING", status_x, status_y, COLOR_GREEN, 'small')
+        elif agent.counter_window > 0:
+            self.draw_text("COUNTER!", status_x, status_y, COLOR_YELLOW, 'small')
+        elif agent.parry_cooldown > 0:
+            cd_pct = agent.parry_cooldown / 60  # PARRY_COOLDOWN_FRAMES
+            self.draw_text(f"Parry CD: {int(cd_pct * 100)}%", status_x, status_y, COLOR_GRAY, 'small')
+
+        # Invincibility indicator (i-frames)
+        if agent.invincible:
+            pygame.draw.circle(self.screen, COLOR_CYAN, (int(agent.x), int(agent.y - 70)), 5)

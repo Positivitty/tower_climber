@@ -31,8 +31,15 @@ class PhysicsBody:
         self.vy -= force * 0.5  # Pop up slightly
         self.grounded = False
 
-    def update_physics(self):
-        """Update position based on velocity and handle ground collision."""
+    def update_physics(self, terrain_manager=None):
+        """Update position based on velocity and handle ground/platform collision.
+
+        Args:
+            terrain_manager: Optional TerrainManager for platform collision
+        """
+        # Store previous y for platform landing detection
+        prev_y = self.y
+
         # Apply gravity
         self.apply_gravity()
 
@@ -41,19 +48,55 @@ class PhysicsBody:
         self.y += self.vy
 
         # Apply friction to horizontal movement
-        self.vx *= FRICTION
+        # Check for ice patch if terrain manager provided
+        friction = FRICTION
+        if terrain_manager:
+            from config import HAZARD_ICE_PATCH, ICE_PATCH_FRICTION
+            for hazard in terrain_manager.hazards:
+                if hazard.hazard_type == HAZARD_ICE_PATCH:
+                    if hazard.is_entity_in_hazard(self):
+                        friction = ICE_PATCH_FRICTION
+                        break
+        self.vx *= friction
 
         # Clamp very small velocities to zero
         if abs(self.vx) < 0.1:
             self.vx = 0
 
-        # Ground collision
-        if self.y >= GROUND_Y:
-            self.y = GROUND_Y
-            self.vy = 0
-            self.grounded = True
-        else:
-            self.grounded = False
+        # Platform collision (only when falling down)
+        self.grounded = False
+        landed_on_platform = False
+
+        if terrain_manager and self.vy >= 0:
+            for platform in terrain_manager.platforms:
+                if not platform.active:
+                    continue
+
+                # Check horizontal overlap
+                entity_left = self.x - self.width // 2
+                entity_right = self.x + self.width // 2
+
+                if entity_right < platform.x or entity_left > platform.x + platform.width:
+                    continue
+
+                # Check if falling through platform level
+                if prev_y <= platform.y and self.y >= platform.y:
+                    self.y = platform.y
+                    self.vy = 0
+                    self.grounded = True
+                    landed_on_platform = True
+                    if hasattr(self, 'current_platform'):
+                        self.current_platform = platform
+                    break
+
+        # Ground collision (fallback if not on platform)
+        if not landed_on_platform:
+            if self.y >= GROUND_Y:
+                self.y = GROUND_Y
+                self.vy = 0
+                self.grounded = True
+                if hasattr(self, 'current_platform'):
+                    self.current_platform = None
 
         # Keep within screen bounds horizontally
         self.x = max(self.width // 2, min(SCREEN_WIDTH - self.width // 2, self.x))
