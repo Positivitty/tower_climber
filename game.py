@@ -286,6 +286,9 @@ class Game:
         # Generate terrain for this floor
         self.terrain_manager.generate_for_floor(self.current_floor)
 
+        # Set renderer floor for themed backgrounds
+        self.renderer.set_floor(self.current_floor)
+
         self._spawn_enemies()
         self.decision_tick_counter = 0
         self.state = STATE_COMBAT
@@ -983,7 +986,9 @@ class Game:
             pass  # Handled by events
 
     def _render(self):
-        self.renderer.clear()
+        # Use themed background for combat, plain for menus
+        use_theme = self.state == STATE_COMBAT
+        self.renderer.clear(use_theme=use_theme)
 
         if self.state == STATE_MAIN_MENU:
             self._render_main_menu()
