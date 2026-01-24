@@ -192,7 +192,27 @@ class Game:
             self._spawn_boss()
             return
 
-        # Get enemy pool for current floor
+        # Check for tile map spawns
+        if self.terrain_manager.uses_tile_map and self.terrain_manager.enemy_spawns:
+            enemy_pool = self._get_enemy_pool()
+
+            for spawn_x, spawn_y, enemy_type in self.terrain_manager.enemy_spawns:
+                # Use specified type or random from pool
+                if enemy_type == 'random':
+                    enemy_type = random.choice(enemy_pool)
+
+                enemy = self._create_enemy(enemy_type, spawn_x)
+                enemy.y = spawn_y
+
+                # Apply floor scaling
+                floor_mult = 1 + (self.current_floor - 1) * 0.15
+                enemy.hp = int(enemy.hp * floor_mult)
+                enemy.max_hp = enemy.hp
+
+                self.enemies.append(enemy)
+            return
+
+        # Procedural spawning for later floors
         enemy_pool = self._get_enemy_pool()
 
         # Number of enemies scales with floor (2 to 5)
@@ -285,6 +305,12 @@ class Game:
 
         # Generate terrain for this floor
         self.terrain_manager.generate_for_floor(self.current_floor)
+
+        # Use tile map spawn point if available
+        if self.terrain_manager.uses_tile_map and self.terrain_manager.player_spawn:
+            spawn_x, spawn_y = self.terrain_manager.player_spawn
+            self.agent.x = spawn_x
+            self.agent.y = spawn_y
 
         self._spawn_enemies()
         self.decision_tick_counter = 0

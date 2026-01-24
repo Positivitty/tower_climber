@@ -2,7 +2,7 @@
 
 import random
 from config import (
-    SCREEN_WIDTH, GROUND_Y,
+    SCREEN_WIDTH, SCREEN_HEIGHT, GROUND_Y,
     PLATFORM_WOODEN, PLATFORM_STONE, PLATFORM_CRUMBLING,
     PLATFORM_MIN_WIDTH, PLATFORM_MAX_WIDTH, PLATFORM_HEIGHT,
     PLATFORM_CRUMBLE_TIME, PLATFORM_HEIGHTS,
@@ -14,6 +14,7 @@ from config import (
     ELEMENT_POISON
 )
 from systems.status_effects import create_effect
+from stages import get_stage, TILE_SIZE
 
 
 class Platform:
@@ -198,10 +199,122 @@ class TerrainManager:
     def __init__(self):
         self.platforms = []
         self.hazards = []
+        self.blocks = []  # Solid wall blocks from tile maps
+        self.player_spawn = None  # (x, y) tuple
+        self.enemy_spawns = []  # List of (x, y, type) tuples
+        self.uses_tile_map = False
+
+    def generate_from_tilemap(self, tile_map: list) -> dict:
+        """Parse a tile map and create terrain, returning spawn points.
+
+        Returns:
+            dict with 'player_spawn' and 'enemy_spawns'
+        """
+        self.clear()
+        self.uses_tile_map = True
+
+        # Calculate tile dimensions based on screen size
+        map_height = len(tile_map)
+        map_width = len(tile_map[0]) if tile_map else 0
+
+        tile_w = SCREEN_WIDTH // map_width
+        tile_h = SCREEN_HEIGHT // map_height
+
+        # Find the floor row (last row with B's) to calculate Y offset
+        # This maps tile Y coordinates to game's GROUND_Y
+        floor_row = map_height - 1  # Assume bottom row is floor
+        y_offset = GROUND_Y - (floor_row * tile_h)
+
+        player_spawn = None
+        enemy_spawns = []
+
+        # Track horizontal runs of blocks for platform creation
+        for row_idx, row in enumerate(tile_map):
+            block_run_start = None
+
+            for col_idx, tile in enumerate(row):
+                x = col_idx * tile_w
+                y = row_idx * tile_h + y_offset
+
+                if tile == 'B':
+                    # Track block runs for creating platforms
+                    if block_run_start is None:
+                        block_run_start = col_idx
+
+                elif tile == 'P':
+                    # Player spawn - place feet at GROUND_Y level
+                    player_spawn = (x + tile_w // 2, GROUND_Y)
+                    # End any block run
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+                elif tile == 'E':
+                    # Generic enemy spawn
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'random'))
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+                elif tile == 'M':
+                    # Melee enemy spawn
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'melee'))
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+                elif tile == 'R':
+                    # Ranged enemy spawn
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'ranged'))
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+                elif tile == 'H':
+                    # Hazard - create spikes
+                    self.hazards.append(Hazard(x, GROUND_Y, tile_w, HAZARD_SPIKES))
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+                else:  # '.' or other - empty space
+                    if block_run_start is not None:
+                        self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
+                        block_run_start = None
+
+            # End of row - close any open block run
+            if block_run_start is not None:
+                self._create_platform_from_run(block_run_start, len(row), row_idx, tile_w, tile_h, y_offset)
+
+        self.player_spawn = player_spawn
+        self.enemy_spawns = enemy_spawns
+
+        return {
+            'player_spawn': player_spawn,
+            'enemy_spawns': enemy_spawns
+        }
+
+    def _create_platform_from_run(self, start_col: int, end_col: int, row: int, tile_w: int, tile_h: int, y_offset: int = 0):
+        """Create a platform from a horizontal run of blocks."""
+        x = start_col * tile_w
+        y = row * tile_h + y_offset
+        width = (end_col - start_col) * tile_w
+
+        # Only create platforms that aren't at the very top or bottom (walls)
+        # and aren't full-width (floor/ceiling)
+        if width < SCREEN_WIDTH - tile_w * 2:
+            self.platforms.append(Platform(x, y, width, PLATFORM_STONE))
 
     def generate_for_floor(self, floor_number: int):
         """Generate terrain layout based on floor number."""
         self.clear()
+        self.uses_tile_map = False
+
+        # Check for tile-based stage first (floors 1-3)
+        tile_map = get_stage(floor_number)
+        if tile_map is not None:
+            self.generate_from_tilemap(tile_map)
+            return
 
         # Check for boss floor - special terrain
         from config import BOSS_FLOOR_INTERVAL
@@ -394,3 +507,7 @@ class TerrainManager:
         """Clear all terrain."""
         self.platforms = []
         self.hazards = []
+        self.blocks = []
+        self.player_spawn = None
+        self.enemy_spawns = []
+        self.uses_tile_map = False
