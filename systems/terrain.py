@@ -14,6 +14,7 @@ from config import (
     ELEMENT_POISON
 )
 from systems.status_effects import create_effect
+from stages import STAGE_1, STAGE_2, STAGE_3
 
 
 class Platform:
@@ -199,9 +200,58 @@ class TerrainManager:
         self.platforms = []
         self.hazards = []
 
+    def _parse_stage(self, stage_layout: list):
+        """Parse a stage layout string into platforms and hazards.
+        
+        Stage format:
+        B = Block/Platform
+        H = Hazard
+        . = Empty space
+        P = Player (spawn point - we ignore this)
+        E = Enemy (spawn point - we ignore this)
+        """
+        # Tile size - divide screen into grid based on stage width
+        tile_width = SCREEN_WIDTH // len(stage_layout[0])
+        
+        # Ground level is at the bottom - work backwards
+        num_rows = len(stage_layout)
+        
+        for row_idx, row in enumerate(stage_layout):
+            for col_idx, tile in enumerate(row):
+                x = col_idx * tile_width
+                y = GROUND_Y - (num_rows - row_idx - 1) * 50  # Each row is 50 pixels high
+                
+                if tile == 'B':
+                    # Create platform from blocks
+                    platform_width = tile_width
+                    self.platforms.append(Platform(x, y, platform_width, PLATFORM_STONE))
+                elif tile == 'H':
+                    # Create hazard (spikes on platforms, lava on ground)
+                    if y >= GROUND_Y - 20:
+                        hazard_type = HAZARD_SPIKES
+                    else:
+                        hazard_type = random.choice([HAZARD_SPIKES, HAZARD_FIRE_GEYSER])
+                    self.hazards.append(Hazard(x, y, tile_width, hazard_type))
+
+    def clear(self):
+        """Clear all platforms and hazards."""
+        self.platforms = []
+        self.hazards = []
+
     def generate_for_floor(self, floor_number: int):
         """Generate terrain layout based on floor number."""
         self.clear()
+
+        # Use predefined stages for first 3 floors
+        if floor_number == 1:
+            self._parse_stage(STAGE_1)
+            return
+        elif floor_number == 2:
+            self._parse_stage(STAGE_2)
+            return
+        elif floor_number == 3:
+            self._parse_stage(STAGE_3)
+            return
 
         # Check for boss floor - special terrain
         from config import BOSS_FLOOR_INTERVAL

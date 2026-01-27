@@ -120,6 +120,10 @@ class Game:
         self.minigame_result_timer = 0  # Timer to display result
         self.minigame_ai_delay = 0  # Delay between AI decisions in minigames
 
+        # Training limit per floor
+        self.trainings_this_floor = 0
+        self.max_trainings_per_floor = 3
+
         # Player menu state
         self.base_menu_selection = 0  # Which base option is selected
         self.train_menu_selection = 0  # Which stat is selected
@@ -282,6 +286,7 @@ class Game:
         self.particle_system.clear()
         self.state_encoder.reset()
         self.q_agent.reset_episode()
+        self.trainings_this_floor = 0  # Reset training count for new floor
 
         # Generate terrain for this floor
         self.terrain_manager.generate_for_floor(self.current_floor)
@@ -292,6 +297,12 @@ class Game:
         self.ai_dialogue.add_thought(f"Entering Floor {self.current_floor}...")
 
     def _start_training(self, stat: str):
+        # Check if training limit reached
+        if self.trainings_this_floor >= self.max_trainings_per_floor:
+            self.ai_dialogue.add_thought(f"Already trained {self.max_trainings_per_floor} times this floor!")
+            return
+        
+        self.trainings_this_floor += 1
         difficulty = self.agent.get_stat(stat) // 5 + 1
         self.current_minigame = create_minigame(stat, difficulty)
         self.minigame_stat = stat
@@ -1281,7 +1292,10 @@ class Game:
 
     def _render_train_select(self):
         self.renderer.draw_text("TRAIN STATS", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
-        self.renderer.draw_text("Select a stat to train:", SCREEN_WIDTH // 2, 80, COLOR_WHITE, 'medium', center=True)
+        trainings_remaining = self.max_trainings_per_floor - self.trainings_this_floor
+        remaining_color = COLOR_GREEN if trainings_remaining > 0 else COLOR_RED
+        self.renderer.draw_text(f"Trainings remaining this floor: {trainings_remaining}/{self.max_trainings_per_floor}", SCREEN_WIDTH // 2, 65, remaining_color, 'small', center=True)
+        self.renderer.draw_text("Select a stat to train:", SCREEN_WIDTH // 2, 90, COLOR_WHITE, 'medium', center=True)
 
         stats = ['strength', 'intelligence', 'agility', 'defense', 'luck']
         stat_descriptions = {
@@ -1292,7 +1306,7 @@ class Game:
             'luck': 'Improves crits and drops'
         }
 
-        y = 130
+        y = 140
         for i, stat in enumerate(stats):
             current_val = self.agent.get_stat(stat)
             is_unlocked = self.agent.is_training_unlocked(stat)

@@ -71,10 +71,9 @@ STAGE_3 = [
 
 
 
-    '
-#This will be changed after a few testing, I just wanted to make one exist first. B = Block (Implement collisions) R = Ranged Enemy, M = Melee Enemy, P =  Player, H = Hazard (Implement Collisions)
+# This will be changed after a few testing, I just wanted to make one exist first. B = Block (Implement collisions) R = Ranged Enemy, M = Melee Enemy, P =  Player, H = Hazard (Implement Collisions)
 
-#Here is how I implement Blocks (Numbers are copy pasted from another project and most likely need to be changed)
+# Here is how I implement Blocks (Numbers are copy pasted from another project and most likely need to be changed)
 #class Block(pygame.sprite.Sprite):
     #def __init__(self, game, x, y):
         #self.game = game
