@@ -199,17 +199,26 @@ class TerrainManager:
     def __init__(self):
         self.platforms = []
         self.hazards = []
+        self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}
 
-    def _parse_stage(self, stage_layout: list):
-        """Parse a stage layout string into platforms and hazards.
+    def _parse_stage(self, stage_layout: list) -> dict:
+        """Parse a stage layout string into platforms, hazards, and spawn points.
         
         Stage format:
         B = Block/Platform
         H = Hazard
         . = Empty space
-        P = Player (spawn point - we ignore this)
-        E = Enemy (spawn point - we ignore this)
+        P = Player spawn point
+        E = Enemy spawn point
+        
+        Returns:
+            dict with 'player_spawn' and 'enemy_spawns' keys
         """
+        spawn_points = {
+            'player_spawn': None,
+            'enemy_spawns': []
+        }
+        
         # Tile size - divide screen into grid based on stage width
         tile_width = SCREEN_WIDTH // len(stage_layout[0])
         
@@ -232,11 +241,20 @@ class TerrainManager:
                     else:
                         hazard_type = random.choice([HAZARD_SPIKES, HAZARD_FIRE_GEYSER])
                     self.hazards.append(Hazard(x, y, tile_width, hazard_type))
+                elif tile == 'P':
+                    # Player spawn point
+                    spawn_points['player_spawn'] = (x + tile_width // 2, y)
+                elif tile == 'E':
+                    # Enemy spawn point
+                    spawn_points['enemy_spawns'].append((x + tile_width // 2, y))
+        
+        return spawn_points
 
     def clear(self):
-        """Clear all platforms and hazards."""
+        """Clear all platforms, hazards, and spawn points."""
         self.platforms = []
         self.hazards = []
+        self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}
 
     def generate_for_floor(self, floor_number: int):
         """Generate terrain layout based on floor number."""
@@ -244,13 +262,13 @@ class TerrainManager:
 
         # Use predefined stages for first 3 floors
         if floor_number == 1:
-            self._parse_stage(STAGE_1)
+            self.spawn_points = self._parse_stage(STAGE_1)
             return
         elif floor_number == 2:
-            self._parse_stage(STAGE_2)
+            self.spawn_points = self._parse_stage(STAGE_2)
             return
         elif floor_number == 3:
-            self._parse_stage(STAGE_3)
+            self.spawn_points = self._parse_stage(STAGE_3)
             return
 
         # Check for boss floor - special terrain

@@ -85,6 +85,7 @@ class Game:
         self.pending_loot = []
         self.pending_skills = []
         self.pending_training_unlocks = []
+        self.post_floor_timer = 0  # Timer to auto-transition after loot display
 
         # Death roll state
         self.death_roll = None
@@ -187,7 +188,7 @@ class Game:
         return (floor_bucket, min(4, lowest // 5), min(4, highest // 5), min(4, total // 20))
 
     def _spawn_enemies(self):
-        """Spawn enemies based on floor number."""
+        """Spawn enemies based on floor number and stage spawn points."""
         import random
         self.enemies = []
 
@@ -198,35 +199,61 @@ class Game:
 
         # Get enemy pool for current floor
         enemy_pool = self._get_enemy_pool()
+        
+        # Use spawn points from stage if available
+        enemy_spawns = self.terrain_manager.spawn_points['enemy_spawns']
+        
+        if enemy_spawns:
+            # Use stage-defined spawn points
+            for spawn_x, spawn_y in enemy_spawns:
+                enemy_type = random.choice(enemy_pool)
+                enemy = self._create_enemy(enemy_type, spawn_x)
+                
+                # Set Y position from stage if it's not on ground
+                if spawn_y < GROUND_Y:
+                    enemy.y = spawn_y
+                
+                # Apply floor scaling
+                floor_mult = 1 + (self.current_floor - 1) * 0.15
+                enemy.hp = int(enemy.hp * floor_mult)
+                enemy.max_hp = enemy.hp
 
-        # Number of enemies scales with floor (2 to 5)
-        num_enemies = min(5, 2 + self.current_floor // 3)
+                # Chance for elemental variant (increases with floor)
+                elemental_chance = 0.1 + self.current_floor * 0.02
+                if random.random() < elemental_chance:
+                    self._apply_element(enemy)
 
-        for i in range(num_enemies):
-            enemy_type = random.choice(enemy_pool)
-            x_pos = SCREEN_WIDTH * (0.6 + i * 0.08)
+                self.enemies.append(enemy)
+        else:
+            # Fallback to random spawning for procedurally generated floors
+            num_enemies = min(5, 2 + self.current_floor // 3)
 
-            enemy = self._create_enemy(enemy_type, x_pos)
+            for i in range(num_enemies):
+                enemy_type = random.choice(enemy_pool)
+                x_pos = SCREEN_WIDTH * (0.6 + i * 0.08)
 
-            # Apply floor scaling
-            floor_mult = 1 + (self.current_floor - 1) * 0.15
-            enemy.hp = int(enemy.hp * floor_mult)
-            enemy.max_hp = enemy.hp
+                enemy = self._create_enemy(enemy_type, x_pos)
 
-            # Chance for elemental variant (increases with floor)
-            elemental_chance = 0.1 + self.current_floor * 0.02
-            if random.random() < elemental_chance:
-                self._apply_element(enemy)
+                # Apply floor scaling
+                floor_mult = 1 + (self.current_floor - 1) * 0.15
+                enemy.hp = int(enemy.hp * floor_mult)
+                enemy.max_hp = enemy.hp
 
-            self.enemies.append(enemy)
+                # Chance for elemental variant (increases with floor)
+                elemental_chance = 0.1 + self.current_floor * 0.02
+                if random.random() < elemental_chance:
+                    self._apply_element(enemy)
+
+                self.enemies.append(enemy)
 
     def _get_enemy_pool(self) -> list:
         """Get available enemy types for current floor."""
+        # Only basic enemies on premade stages (1-3)
+        # Variant enemies (assassin, tank) only on procedural floors (4+)
         pool = ['melee', 'ranged']
 
-        if self.current_floor >= 2:
+        if self.current_floor >= 4:
             pool.append('assassin')
-        if self.current_floor >= 3:
             pool.append('tank')
 
         return pool
@@ -290,6 +317,10 @@ class Game:
 
         # Generate terrain for this floor
         self.terrain_manager.generate_for_floor(self.current_floor)
+        
+        # Set player position from stage spawn point if available
+        if self.terrain_manager.spawn_points['player_spawn']:
+            self.agent.x, self.agent.y = self.terrain_manager.spawn_points['player_spawn']
 
         self._spawn_enemies()
         self.decision_tick_counter = 0
@@ -666,6 +697,7 @@ class Game:
 
             self.current_floor += 1
             self.post_floor_selection = 0
+            self.post_floor_timer = 0  # Reset timer for auto-transition
             self.state = STATE_POST_FLOOR
         else:
             self.ai_dialogue.add_thought("Defeated! Rolling for penalty...")
@@ -677,7 +709,10 @@ class Game:
         self._save_game()
 
     def _update_post_floor(self):
-        pass  # Handled by events
+        self.post_floor_timer += 1
+        # Auto-transition after 3 seconds (180 frames at 60 FPS)
+        if self.post_floor_timer >= 180:
+            self._auto_continue_or_return()
 
     def _handle_events(self):
         for event in pygame.event.get():
@@ -936,38 +971,40 @@ class Game:
         elif key == pygame.K_ESCAPE:
             self.state = STATE_BASE
 
-    def _handle_post_floor_input(self, key):
-        if key == pygame.K_UP or key == pygame.K_DOWN:
-            self.post_floor_selection = 1 - self.post_floor_selection
-        elif key in (pygame.K_RETURN, pygame.K_SPACE):
-            # Handle equipment loot
-            for item in self.pending_loot:
-                self.agent.equipment.equip(item)
-                self.ai_dialogue.add_thought(f"Equipped: {item.name}")
-            self.pending_loot = []
+    def _auto_continue_or_return(self):
+        """Auto-continue climbing if floor cleared, else return to base."""
+        # Handle equipment loot
+        for item in self.pending_loot:
+            self.agent.equipment.equip(item)
+            self.ai_dialogue.add_thought(f"Equipped: {item.name}")
+        self.pending_loot = []
 
-            # Handle skill drops
-            for skill in self.pending_skills:
-                if self.agent.add_skill(skill):
-                    self.ai_dialogue.add_thought(f"Learned: {skill.name}!")
-                else:
-                    self.ai_dialogue.add_thought(f"Can't learn {skill.name} (full)")
-            self.pending_skills = []
-
-            # Handle training unlocks
-            for unlock in self.pending_training_unlocks:
-                self.agent.unlock_training(unlock.stat)
-                self.ai_dialogue.add_thought(f"Unlocked {unlock.stat.upper()} training!")
-            self.pending_training_unlocks = []
-
-            if self.post_floor_selection == 0 and self.floor_cleared:
-                # Continue climbing
-                self._start_floor()
+        # Handle skill drops
+        for skill in self.pending_skills:
+            if self.agent.add_skill(skill):
+                self.ai_dialogue.add_thought(f"Learned: {skill.name}!")
             else:
-                # Return to base
-                self.state = STATE_BASE
-                self.ai_dialogue.add_thought("Returned to base camp.")
-                self.ai_dialogue.think_about_base(self.agent, self.q_agent.epsilon)
+                self.ai_dialogue.add_thought(f"Can't learn {skill.name} (full)")
+        self.pending_skills = []
+
+        # Handle training unlocks
+        for unlock in self.pending_training_unlocks:
+            self.agent.unlock_training(unlock.stat)
+            self.ai_dialogue.add_thought(f"Unlocked {unlock.stat.upper()} training!")
+        self.pending_training_unlocks = []
+
+        if self.floor_cleared:
+            # Continue climbing
+            self._start_floor()
+        else:
+            # Return to base on defeat
+            self.state = STATE_BASE
+            self.ai_dialogue.add_thought("Defeated. Returning to base camp.")
+            self.ai_dialogue.think_about_base(self.agent, self.q_agent.epsilon)
+
+    def _handle_post_floor_input(self, key):
+        """Post-floor input - currently disabled for auto-progression."""
+        pass  # Game auto-progresses without player input
 
     def _update(self):
         if self.state == STATE_CHAR_CREATE:
@@ -1275,20 +1312,12 @@ class Game:
                 self.renderer.draw_text(f"[Unlock] {unlock.name} - {unlock.description}", SCREEN_WIDTH // 2, y, unlock.color, 'small', center=True)
                 y += 20
 
-        # Options
-        options_y = max(220, y + 20)
-        options = ["Continue Climbing", "Return to Base"]
-        if not self.floor_cleared:
-            options[0] = "(Cannot continue)"
-
-        for i, opt in enumerate(options):
-            color = COLOR_YELLOW if i == self.post_floor_selection else COLOR_WHITE
-            if i == 0 and not self.floor_cleared:
-                color = COLOR_RED
-            prefix = ">" if i == self.post_floor_selection else " "
-            self.renderer.draw_text(f"{prefix} {opt}", SCREEN_WIDTH // 2, options_y + i * 35, color, 'medium', center=True)
-
-        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+        # Auto-progression message
+        progression_y = max(220, y + 20)
+        if self.floor_cleared:
+            self.renderer.draw_text("Continuing to next floor...", SCREEN_WIDTH // 2, progression_y, COLOR_GREEN, 'medium', center=True)
+        else:
+            self.renderer.draw_text("Returning to base camp...", SCREEN_WIDTH // 2, progression_y, COLOR_CYAN, 'medium', center=True)
 
     def _render_train_select(self):
         self.renderer.draw_text("TRAIN STATS", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
