@@ -16,6 +16,7 @@ from config import (
     COLOR_LAVA, COLOR_SPIKES, COLOR_POISON_POOL, COLOR_ICE_PATCH,
     MAX_STAMINA
 )
+from ui.sprites import sprite_manager, background_manager, init_sprite_system
 
 
 class Renderer:
@@ -26,35 +27,93 @@ class Renderer:
         self.font_small = pygame.font.Font(None, 20)
         self.font_medium = pygame.font.Font(None, 28)
         self.font_large = pygame.font.Font(None, 42)
+        self.current_floor = 1
+        self.use_themed_backgrounds = True
 
-    def clear(self):
-        """Clear the screen with background color."""
-        # Draw gradient background
-        for y in range(SCREEN_HEIGHT):
-            ratio = y / SCREEN_HEIGHT
-            color = (
-                int(30 + 20 * ratio),
-                int(30 + 30 * ratio),
-                int(50 + 30 * ratio)
-            )
-            pygame.draw.line(self.screen, color, (0, y), (SCREEN_WIDTH, y))
+        # Initialize sprite system
+        init_sprite_system(SCREEN_WIDTH, SCREEN_HEIGHT)
+
+    def set_floor(self, floor: int):
+        """Set current floor for themed backgrounds."""
+        self.current_floor = floor
+
+    def clear(self, use_theme: bool = True):
+        """Clear the screen with background color or themed background."""
+        if self.use_themed_backgrounds and use_theme and background_manager:
+            background_manager.draw(self.screen, self.current_floor)
+        else:
+            # Fallback gradient background
+            for y in range(SCREEN_HEIGHT):
+                ratio = y / SCREEN_HEIGHT
+                color = (
+                    int(30 + 20 * ratio),
+                    int(30 + 30 * ratio),
+                    int(50 + 30 * ratio)
+                )
+                pygame.draw.line(self.screen, color, (0, y), (SCREEN_WIDTH, y))
 
     def draw_ground(self):
-        """Draw the ground."""
-        # Ground fill
-        pygame.draw.rect(
-            self.screen,
-            (60, 50, 40),
-            (0, GROUND_Y, SCREEN_WIDTH, SCREEN_HEIGHT - GROUND_Y)
-        )
-        # Ground line
-        pygame.draw.line(
-            self.screen,
-            (80, 70, 60),
-            (0, GROUND_Y),
-            (SCREEN_WIDTH, GROUND_Y),
-            3
-        )
+        """Draw the ground with themed textures."""
+        # Get theme-appropriate ground colors
+        if background_manager:
+            theme = background_manager.current_theme
+        else:
+            theme = 'dungeon'
+
+        # Theme-specific ground colors
+        ground_colors = {
+            'dungeon': {'base': (50, 40, 35), 'top': (70, 55, 45), 'detail': (40, 30, 25)},
+            'cave': {'base': (45, 35, 30), 'top': (65, 50, 40), 'detail': (35, 25, 20)},
+            'tower': {'base': (70, 65, 60), 'top': (90, 85, 80), 'detail': (50, 45, 40)},
+            'sky': {'base': (80, 70, 55), 'top': (100, 90, 70), 'detail': (60, 50, 35)},
+            'void': {'base': (30, 20, 40), 'top': (50, 35, 60), 'detail': (20, 10, 30)}
+        }
+
+        colors = ground_colors.get(theme, ground_colors['dungeon'])
+        ground_height = SCREEN_HEIGHT - GROUND_Y
+
+        # Main ground fill with slight gradient
+        for y in range(ground_height):
+            ratio = y / ground_height
+            color = (
+                int(colors['base'][0] + (colors['detail'][0] - colors['base'][0]) * ratio),
+                int(colors['base'][1] + (colors['detail'][1] - colors['base'][1]) * ratio),
+                int(colors['base'][2] + (colors['detail'][2] - colors['base'][2]) * ratio)
+            )
+            pygame.draw.line(self.screen, color, (0, GROUND_Y + y), (SCREEN_WIDTH, GROUND_Y + y))
+
+        # Top edge highlight
+        pygame.draw.line(self.screen, colors['top'], (0, GROUND_Y), (SCREEN_WIDTH, GROUND_Y), 4)
+        pygame.draw.line(self.screen, colors['base'], (0, GROUND_Y + 4), (SCREEN_WIDTH, GROUND_Y + 4), 2)
+
+        # Add texture details based on theme
+        if theme == 'dungeon':
+            # Stone tile pattern
+            for x in range(0, SCREEN_WIDTH, 64):
+                pygame.draw.line(self.screen, colors['detail'], (x, GROUND_Y), (x, SCREEN_HEIGHT), 1)
+            for y in range(GROUND_Y + 32, SCREEN_HEIGHT, 32):
+                pygame.draw.line(self.screen, colors['detail'], (0, y), (SCREEN_WIDTH, y), 1)
+        elif theme == 'cave':
+            # Rough rock texture
+            import random
+            random.seed(42)
+            for _ in range(30):
+                x = random.randint(0, SCREEN_WIDTH)
+                y = random.randint(GROUND_Y + 5, SCREEN_HEIGHT - 5)
+                size = random.randint(3, 8)
+                pygame.draw.circle(self.screen, colors['detail'], (x, y), size)
+        elif theme == 'tower':
+            # Large stone blocks
+            block_w = 80
+            for x in range(0, SCREEN_WIDTH, block_w):
+                pygame.draw.line(self.screen, colors['detail'], (x, GROUND_Y), (x, SCREEN_HEIGHT), 2)
+        elif theme == 'sky':
+            # Cloud platform look - puffy edges
+            for x in range(0, SCREEN_WIDTH, 30):
+                pygame.draw.circle(self.screen, colors['top'], (x + 15, GROUND_Y + 5), 20)
+        elif theme == 'void':
+            # Floating platform with glow
+            pygame.draw.rect(self.screen, (60, 40, 80), (0, GROUND_Y - 5, SCREEN_WIDTH, 10))
 
     def draw_sprite(self, x: float, y: float, facing: int,
                     primary_color: tuple, secondary_color: tuple,
