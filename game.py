@@ -197,32 +197,12 @@ class Game:
             self._spawn_boss()
             return
 
-        # Check for tile map spawns
-        if self.terrain_manager.uses_tile_map and self.terrain_manager.enemy_spawns:
-            enemy_pool = self._get_enemy_pool()
-
-            for spawn_x, spawn_y, enemy_type in self.terrain_manager.enemy_spawns:
-                # Use specified type or random from pool
-                if enemy_type == 'random':
-                    enemy_type = random.choice(enemy_pool)
-
-                enemy = self._create_enemy(enemy_type, spawn_x)
-                enemy.y = spawn_y
-
-                # Apply floor scaling
-                floor_mult = 1 + (self.current_floor - 1) * 0.15
-                enemy.hp = int(enemy.hp * floor_mult)
-                enemy.max_hp = enemy.hp
-
-                self.enemies.append(enemy)
-            return
-
-        # Procedural spawning for later floors
+        # Get enemy pool for current floor
         enemy_pool = self._get_enemy_pool()
-        
-        # Use spawn points from stage if available
+
+        # Use spawn points from terrain (works for both tile maps and procedural)
         enemy_spawns = self.terrain_manager.spawn_points['enemy_spawns']
-        
+
         if enemy_spawns:
             # Use stage-defined spawn points
             for spawn_x, spawn_y in enemy_spawns:
