@@ -18,6 +18,7 @@ from config import (
 )
 from ui import sprites
 from ui.sprites import sprite_manager, init_sprite_system
+from ui.hud import HUD, MenuRenderer
 
 
 class Renderer:
@@ -33,6 +34,10 @@ class Renderer:
 
         # Initialize sprite system
         init_sprite_system(SCREEN_WIDTH, SCREEN_HEIGHT)
+
+        # Initialize improved HUD components
+        self.hud = HUD(screen)
+        self.menu_renderer = MenuRenderer(screen)
 
     def set_floor(self, floor: int):
         """Set current floor for themed backgrounds."""
@@ -940,3 +945,41 @@ class Renderer:
         pygame.draw.rect(self.screen, COLOR_CYAN, bg_rect, 1, border_radius=5)
 
         self.screen.blit(pause_text, text_rect)
+
+    # New HUD integration methods
+    def draw_combat_hud(self, agent, floor: int, q_agent=None):
+        """Draw the improved combat HUD."""
+        self.hud.draw_main_hud(agent, floor, q_agent)
+        if q_agent and q_agent.has_active_guidance():
+            self.hud.draw_guidance_effects(q_agent)
+
+    def draw_menu(self, x: int, y: int, width: int, height: int,
+                  title: str, options: list, selected_index: int,
+                  descriptions: list = None, icons: list = None) -> int:
+        """Draw a styled menu and return content y position.
+
+        Args:
+            options: List of option text strings
+            descriptions: Optional descriptions for each option
+            icons: Optional icons for each option
+        """
+        content_y = self.menu_renderer.draw_menu_panel(x, y, width, height, title)
+
+        for i, text in enumerate(options):
+            desc = descriptions[i] if descriptions and i < len(descriptions) else None
+            icon = icons[i] if icons and i < len(icons) else None
+            h = self.menu_renderer.draw_menu_option(
+                x + 10, content_y,
+                width - 20, text,
+                selected=i == selected_index,
+                icon=icon,
+                description=desc,
+                number=i + 1
+            )
+            content_y += h + 5
+
+        return content_y
+
+    def draw_menu_controls(self, y: int, text: str = "↑↓ Navigate | Enter Select"):
+        """Draw controls hint for menus."""
+        self.menu_renderer.draw_controls_hint(y, text)

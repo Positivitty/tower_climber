@@ -1254,45 +1254,47 @@ class Game:
         self.renderer.draw_text("Press ENTER to start!", SCREEN_WIDTH // 2, 380, COLOR_GREEN, 'medium', center=True)
 
     def _render_base(self):
-        self.renderer.draw_text("BASE CAMP", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
+        # Title
+        self.renderer.draw_text("BASE CAMP", SCREEN_WIDTH // 2, 30, COLOR_YELLOW, 'large', center=True)
 
         race_name = RACES[self.agent.race]['name']
         class_name = CLASSES[self.agent.char_class]['name']
-        self.renderer.draw_text(f"{race_name} {class_name}", SCREEN_WIDTH // 2, 75, COLOR_WHITE, 'small', center=True)
+        self.renderer.draw_text(f"{race_name} {class_name}", SCREEN_WIDTH // 2, 60, COLOR_CYAN, 'small', center=True)
 
-        # Draw agent in center (positioned lower to not overlap menu)
+        # Draw ground and agent
+        self.renderer.draw_ground()
         self.agent.x = SCREEN_WIDTH // 2
         self.agent.y = GROUND_Y
-        self.renderer.draw_ground()
         self.renderer.draw_agent(self.agent)
 
-        self.renderer.draw_agent_stats_compact(self.agent)
+        # Stats display (top right)
         self.renderer.draw_floor_info(self.current_floor)
+        self.renderer.draw_agent_stats_compact(self.agent)
 
         # Equipment display on left
-        y = 120
-        self.renderer.draw_text("Equipment:", 10, y, COLOR_YELLOW, 'small')
+        y = 100
+        self.renderer.draw_text("Equipment:", 15, y, COLOR_YELLOW, 'small')
         for slot in ['weapon', 'armor', 'accessory']:
             y += 18
             item = self.agent.equipment.get_equipped_item(slot)
             if item:
-                self.renderer.draw_text(f"  {slot}: {item.name}", 10, y, item.get_color(), 'small')
+                self.renderer.draw_text(f"  {slot}: {item.name}", 15, y, item.get_color(), 'small')
             else:
-                self.renderer.draw_text(f"  {slot}: (empty)", 10, y, COLOR_WHITE, 'small')
+                self.renderer.draw_text(f"  {slot}: (empty)", 15, y, COLOR_GRAY, 'small')
 
-        # Base menu options
-        menu_y = 220
+        # Base menu options (compact, no descriptions to save space)
+        menu_y = 200
         options = ["Train Stats", "Equipment", "Skills", "AI Strategy", "AI Brain", "Start Climb"]
-        self.renderer.draw_text("What would you like to do?", SCREEN_WIDTH // 2, menu_y, COLOR_WHITE, 'medium', center=True)
+        self.renderer.draw_text("Select an option:", SCREEN_WIDTH // 2, menu_y, COLOR_WHITE, 'medium', center=True)
         for i, label in enumerate(options):
             color = COLOR_YELLOW if i == self.base_menu_selection else COLOR_GREEN
             prefix = "> " if i == self.base_menu_selection else "  "
-            self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 30 + i * 22, color, 'small', center=True)
+            self.renderer.draw_text(f"{prefix}{i+1}. {label}", SCREEN_WIDTH // 2, menu_y + 25 + i * 22, color, 'small', center=True)
 
         # Show skill counts
         active_count = len(self.agent.active_skills)
         passive_count = len(self.agent.passive_skills)
-        self.renderer.draw_text(f"Skills: {active_count} active, {passive_count} passive", SCREEN_WIDTH // 2, 370, COLOR_PURPLE, 'small', center=True)
+        self.renderer.draw_text(f"Skills: {active_count} active, {passive_count} passive", SCREEN_WIDTH // 2, 365, COLOR_PURPLE, 'small', center=True)
 
     def _render_combat(self):
         self.renderer.draw_ground()
@@ -1310,22 +1312,14 @@ class Game:
         # Render particles (blood, stun stars, etc.)
         self.renderer.draw_particles(self.particle_system.particles)
 
-        self.renderer.draw_floor_info(self.current_floor)
-        self.renderer.draw_agent_stats_compact(self.agent)
-
-        # Draw stamina bar and dodge/parry status
-        self.renderer.draw_stamina_bar(self.agent)
-        self.renderer.draw_dodge_parry_status(self.agent)
-
-        # Draw player guidance effect indicators
-        if self.q_agent.has_active_guidance():
-            self.renderer.draw_guidance_indicators(self.q_agent)
+        # Draw improved HUD (consolidates floor info, HP, stamina, cooldowns, guidance effects)
+        self.renderer.draw_combat_hud(self.agent, self.current_floor, self.q_agent)
 
         # Show wound status for agent
         wounds = [p for p, w in self.agent.wounds.items() if w]
         if wounds:
             wound_text = "Wounds: " + ", ".join(wounds)
-            self.renderer.draw_text(wound_text, SCREEN_WIDTH // 2, 35, COLOR_RED, 'small', center=True)
+            self.renderer.draw_text(wound_text, SCREEN_WIDTH // 2, 50, COLOR_RED, 'small', center=True)
 
         # Show teaching mode hint
         if self.player_teaching:
@@ -1419,8 +1413,7 @@ class Game:
         self.renderer.draw_text("TRAIN STATS", SCREEN_WIDTH // 2, 40, COLOR_YELLOW, 'large', center=True)
         trainings_remaining = self.max_trainings_per_floor - self.trainings_this_floor
         remaining_color = COLOR_GREEN if trainings_remaining > 0 else COLOR_RED
-        self.renderer.draw_text(f"Trainings remaining this floor: {trainings_remaining}/{self.max_trainings_per_floor}", SCREEN_WIDTH // 2, 65, remaining_color, 'small', center=True)
-        self.renderer.draw_text("Select a stat to train:", SCREEN_WIDTH // 2, 90, COLOR_WHITE, 'medium', center=True)
+        self.renderer.draw_text(f"Trainings remaining: {trainings_remaining}/{self.max_trainings_per_floor}", SCREEN_WIDTH // 2, 65, remaining_color, 'small', center=True)
 
         stats = ['strength', 'intelligence', 'agility', 'defense', 'luck']
         stat_descriptions = {
@@ -1431,7 +1424,7 @@ class Game:
             'luck': 'Improves crits and drops'
         }
 
-        y = 140
+        y = 100
         for i, stat in enumerate(stats):
             current_val = self.agent.get_stat(stat)
             is_unlocked = self.agent.is_training_unlocked(stat)
@@ -1449,7 +1442,7 @@ class Game:
                     self.renderer.draw_text(f"Find '{item_name}' to unlock", SCREEN_WIDTH // 2, y + 22, COLOR_ORANGE, 'small', center=True)
             y += 45 if i == self.train_menu_selection else 30
 
-        self.renderer.draw_text("UP/DOWN to select, ENTER to train, ESC to go back", SCREEN_WIDTH // 2, 350, COLOR_WHITE, 'small', center=True)
+        self.renderer.draw_text("UP/DOWN select, ENTER train, ESC back", SCREEN_WIDTH // 2, 350, COLOR_GRAY, 'small', center=True)
         self.renderer.draw_agent_stats_compact(self.agent)
 
     def _render_equipment(self):
@@ -1506,7 +1499,7 @@ class Game:
             ('defensive', 'DEFENSIVE', 'Play safe. Run when HP is low.')
         ]
 
-        y = 140
+        y = 130
         for i, (key, name, desc) in enumerate(priorities):
             is_current = key == self.ai_priority
             is_selected = i == self.priority_selection
@@ -1516,9 +1509,9 @@ class Game:
             self.renderer.draw_text(f"{prefix} {name}{suffix}", SCREEN_WIDTH // 2, y, color, 'medium', center=True)
             if is_selected:
                 self.renderer.draw_text(desc, SCREEN_WIDTH // 2, y + 25, COLOR_CYAN, 'small', center=True)
-            y += 60 if is_selected else 35
+            y += 55 if is_selected else 35
 
-        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm, ESC to go back", SCREEN_WIDTH // 2, 320, COLOR_WHITE, 'small', center=True)
+        self.renderer.draw_text("UP/DOWN select, ENTER confirm, ESC back", SCREEN_WIDTH // 2, 320, COLOR_GRAY, 'small', center=True)
 
     def _render_ai_brain(self):
         self.renderer.draw_text("AI BRAIN", SCREEN_WIDTH // 2, 30, COLOR_YELLOW, 'large', center=True)
@@ -1754,9 +1747,8 @@ class Game:
         # Draw freeze overlay
         self.renderer.draw_conversation_freeze_overlay()
 
-        # Draw UI elements
-        self.renderer.draw_floor_info(self.current_floor)
-        self.renderer.draw_agent_stats_compact(self.agent)
+        # Draw improved HUD
+        self.renderer.draw_combat_hud(self.agent, self.current_floor, self.q_agent)
 
         # Draw the conversation UI (portrait, dialogue, choices)
         self.conversation_ui.render()
