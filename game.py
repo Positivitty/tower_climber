@@ -1149,8 +1149,11 @@ class Game:
         elif self.state == STATE_AI_BRAIN:
             self._render_ai_brain()
 
-        # Draw dialogue box (except during conversation - it has its own UI)
-        if self.state != STATE_CONVERSATION:
+        # Draw dialogue box only during gameplay states (not menus)
+        gameplay_states = [STATE_BASE, STATE_COMBAT, STATE_TRAINING, STATE_POST_FLOOR,
+                          STATE_DEATH_ROLL, STATE_TRAIN_SELECT, STATE_EQUIPMENT,
+                          STATE_AI_PRIORITY, STATE_AI_BRAIN, STATE_SKILLS]
+        if self.state in gameplay_states:
             self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
 
         pygame.display.flip()

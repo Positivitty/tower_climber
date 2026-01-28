@@ -206,6 +206,12 @@ CONVERSATION_TEMPLATES = {
                     effect_type=CHOICE_EFFECT_LEARNING_BOOST,
                     effect_value=None,
                     response_text="Processing... new patterns detected!"
+                ),
+                ConversationChoice(
+                    text="Just fight",
+                    effect_type=CHOICE_EFFECT_ENCOURAGEMENT,
+                    effect_value=None,
+                    response_text="Right, let's do this!"
                 )
             ],
             priority=4
