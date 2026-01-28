@@ -889,3 +889,54 @@ class Renderer:
         # Invincibility indicator (i-frames)
         if agent.invincible:
             pygame.draw.circle(self.screen, COLOR_CYAN, (int(agent.x), int(agent.y - 70)), 5)
+
+    def draw_guidance_indicators(self, q_agent):
+        """Draw indicators for active player guidance effects."""
+        status = q_agent.get_guidance_status()
+        indicators = []
+
+        if status['strategy_bias']:
+            bias = status['strategy_bias'].upper()
+            timer = status['strategy_timer'] / 60  # Convert to seconds
+            color = COLOR_RED if bias == 'AGGRESSIVE' else COLOR_BLUE
+            indicators.append((f"{bias} ({timer:.1f}s)", color))
+
+        if status['learning_boost']:
+            timer = status['learning_timer'] / 60
+            indicators.append((f"LEARNING x1.5 ({timer:.1f}s)", COLOR_GREEN))
+
+        if status['encouragement']:
+            timer = status['encouragement_timer'] / 60
+            indicators.append((f"FOCUSED ({timer:.1f}s)", COLOR_CYAN))
+
+        if not indicators:
+            return
+
+        # Draw indicators at top left
+        y = 10
+        for text, color in indicators:
+            # Background pill
+            text_surface = self.font_small.render(text, True, color)
+            text_width = text_surface.get_width()
+            pill_rect = pygame.Rect(10, y - 2, text_width + 16, 20)
+            pygame.draw.rect(self.screen, (30, 30, 40), pill_rect, border_radius=10)
+            pygame.draw.rect(self.screen, color, pill_rect, 1, border_radius=10)
+            self.screen.blit(text_surface, (18, y))
+            y += 25
+
+    def draw_conversation_freeze_overlay(self):
+        """Draw a subtle overlay to indicate combat is frozen."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 30, 60))  # Subtle blue tint
+        self.screen.blit(overlay, (0, 0))
+
+        # Draw "PAUSED" indicator at top
+        pause_text = self.font_medium.render("CONVERSATION", True, COLOR_CYAN)
+        text_rect = pause_text.get_rect(center=(SCREEN_WIDTH // 2, 30))
+
+        # Background for visibility
+        bg_rect = text_rect.inflate(20, 10)
+        pygame.draw.rect(self.screen, (20, 25, 35), bg_rect, border_radius=5)
+        pygame.draw.rect(self.screen, COLOR_CYAN, bg_rect, 1, border_radius=5)
+
+        self.screen.blit(pause_text, text_rect)

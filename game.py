@@ -4,7 +4,7 @@ import pygame
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, DECISION_TICK_FRAMES,
     STATE_BASE, STATE_COMBAT, STATE_POST_FLOOR, STATE_TRAINING,
-    STATE_DEATH_ROLL, STATE_SKILLS,
+    STATE_DEATH_ROLL, STATE_SKILLS, STATE_CONVERSATION,
     ACTION_ATTACK, ACTION_RUN, ACTION_CHARGE, ACTION_START_CLIMB,
     ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW,
     ACTION_DODGE, ACTION_PARRY, ACTION_JUMP,
@@ -15,7 +15,11 @@ from config import (
     COLOR_ORANGE, COLOR_PURPLE,
     BOSS_FLOOR_INTERVAL, ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
     COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
-    REWARD_SUCCESSFUL_DODGE, REWARD_HAZARD_DAMAGE
+    REWARD_SUCCESSFUL_DODGE, REWARD_HAZARD_DAMAGE,
+    TRIGGER_LOW_HP, TRIGGER_NEAR_DEATH, TRIGGER_BOSS_ENCOUNTER,
+    TRIGGER_FIRST_ENEMY_TYPE, TRIGGER_VICTORY, TRIGGER_DEATH,
+    TRIGGER_CLOSE_CALL, TRIGGER_STRATEGY_QUESTION,
+    CHOICE_EFFECT_STRATEGY, CHOICE_EFFECT_LEARNING_BOOST, CHOICE_EFFECT_ENCOURAGEMENT
 )
 from systems.particles import ParticleSystem
 from entities.agent import Agent
@@ -37,6 +41,8 @@ from systems.character import (
     TrainingUnlockItem, TRAINING_UNLOCK_ITEMS
 )
 from ui.renderer import Renderer
+from ui.conversation_ui import ConversationUI
+from ai.critical_moments import CriticalMomentDetector
 
 
 # Game states
@@ -113,6 +119,12 @@ class Game:
         self.ai_dialogue = AIDialogue()
         self.current_state = None
 
+        # Conversation system
+        self.conversation_ui = ConversationUI(self.screen)
+        self.critical_moment_detector = CriticalMomentDetector()
+        self.previous_state = None  # State to return to after conversation
+        self.last_agent_hp = self.agent.hp  # Track HP changes for triggers
+
         # Mini-game state
         self.current_minigame = None
         self.minigame_stat = None
@@ -150,10 +162,16 @@ class Game:
             if 'equipment' in result:
                 self.agent.equipment = Equipment.from_dict(result['equipment'])
             self.q_agent.alpha = self.q_agent.base_alpha * self.agent.get_learning_modifier()
+            # Load critical moment tracking
+            if 'critical_moments' in result and result['critical_moments']:
+                self.critical_moment_detector.load_state_dict(result['critical_moments'])
 
     def _save_game(self):
-        # Add equipment to save
-        extra_data = {'equipment': self.agent.equipment.to_dict()}
+        # Add equipment and critical moment tracking to save
+        extra_data = {
+            'equipment': self.agent.equipment.to_dict(),
+            'critical_moments': self.critical_moment_detector.get_state_dict()
+        }
         save_game(self.agent, self.q_agent, self.current_floor, extra_data)
 
     def _create_character(self):
@@ -314,6 +332,10 @@ class Game:
         self.state_encoder.reset()
         self.q_agent.reset_episode()
         self.trainings_this_floor = 0  # Reset training count for new floor
+        self.critical_moment_detector.reset_for_floor()
+        self.critical_moment_detector.reset_for_combat()
+        self.ai_dialogue.reset_for_combat()
+        self.last_agent_hp = self.agent.hp
 
         # Generate terrain for this floor
         self.terrain_manager.generate_for_floor(self.current_floor)
@@ -440,7 +462,10 @@ class Game:
 
     def _update_base(self):
         # Base is now a player-controlled menu, no automatic AI decisions
-        pass  # Handled by events
+        # Check for strategy question trigger (once per base visit)
+        if self.critical_moment_detector.check_strategy_question():
+            trigger, data = self.critical_moment_detector.get_pending_trigger()
+            self._start_conversation(trigger, data)
 
     def _update_training(self):
         if self.current_minigame is None:
@@ -531,6 +556,13 @@ class Game:
         self.combat_system.process_enemy_attacks(self.agent, self.enemies)
         self.combat_system.update_projectiles(self.agent)
         self.combat_system.update_agent_projectiles(self.enemies, self.agent)
+
+        # Check for critical moments that should trigger conversations
+        self._check_critical_moments()
+
+        # If a conversation started, don't continue combat update
+        if self.state == STATE_CONVERSATION:
+            return
 
         # Update particle system
         self.particle_system.update()
@@ -681,7 +713,9 @@ class Game:
         self.pending_training_unlocks = []
 
         if floor_cleared:
-            self.ai_dialogue.add_thought(f"Floor {self.current_floor} CLEARED!")
+            self.ai_dialogue.add_critical_thought(f"Floor {self.current_floor} CLEARED!")
+            # Trigger victory conversation (queued for after transition)
+            self._trigger_floor_victory()
             # Generate loot from all enemies
             for enemy in self.enemies:
                 loot = generate_loot(
@@ -709,11 +743,13 @@ class Game:
             self.post_floor_timer = 0  # Reset timer for auto-transition
             self.state = STATE_POST_FLOOR
         else:
-            self.ai_dialogue.add_thought("Defeated! Rolling for penalty...")
-            # Start death roll
+            self.ai_dialogue.add_critical_thought("Defeated!")
+            # Trigger death conversation first, then death roll
+            self._trigger_death()
+            # The death roll will start after conversation ends
             self.death_roll = DeathRollAnimation()
             self.death_penalty_applied = False
-            self.state = STATE_DEATH_ROLL
+            # Note: state is now STATE_CONVERSATION, will transition to death roll after
 
         self._save_game()
 
@@ -778,6 +814,8 @@ class Game:
                         elif event.key == pygame.K_j:
                             self.player_action = ACTION_JUMP
                             self.ai_dialogue.add_thought("Player: JUMP!")
+                elif self.state == STATE_CONVERSATION:
+                    self._handle_conversation_input(event.key)
                 elif self.state == STATE_TRAINING:
                     if event.key == pygame.K_ESCAPE:
                         self.current_minigame = None
@@ -1016,12 +1054,20 @@ class Game:
         pass  # Game auto-progresses without player input
 
     def _update(self):
+        # Update dialogue cooldowns
+        self.ai_dialogue.update()
+
+        # Update Q-agent guidance effects
+        self.q_agent.update_guidance_effects()
+
         if self.state == STATE_CHAR_CREATE:
             self._update_char_create()
         elif self.state == STATE_BASE:
             self._update_base()
         elif self.state == STATE_COMBAT:
             self._update_combat()
+        elif self.state == STATE_CONVERSATION:
+            self._update_conversation()
         elif self.state == STATE_TRAINING:
             self._update_training()
         elif self.state == STATE_POST_FLOOR:
@@ -1040,8 +1086,8 @@ class Game:
             pass  # Handled by events
 
     def _render(self):
-        # Use themed background for combat, plain for menus
-        use_theme = self.state == STATE_COMBAT
+        # Use themed background for combat and conversation, plain for menus
+        use_theme = self.state in (STATE_COMBAT, STATE_CONVERSATION)
         self.renderer.clear(use_theme=use_theme)
 
         if self.state == STATE_MAIN_MENU:
@@ -1054,6 +1100,8 @@ class Game:
             self._render_base()
         elif self.state == STATE_COMBAT:
             self._render_combat()
+        elif self.state == STATE_CONVERSATION:
+            self._render_conversation()
         elif self.state == STATE_TRAINING:
             self._render_training()
         elif self.state == STATE_POST_FLOOR:
@@ -1071,8 +1119,9 @@ class Game:
         elif self.state == STATE_AI_BRAIN:
             self._render_ai_brain()
 
-        # Always draw dialogue box
-        self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
+        # Draw dialogue box (except during conversation - it has its own UI)
+        if self.state != STATE_CONVERSATION:
+            self.renderer.draw_dialogue_box(self.ai_dialogue.get_recent_messages())
 
         pygame.display.flip()
 
@@ -1237,6 +1286,10 @@ class Game:
         # Draw stamina bar and dodge/parry status
         self.renderer.draw_stamina_bar(self.agent)
         self.renderer.draw_dodge_parry_status(self.agent)
+
+        # Draw player guidance effect indicators
+        if self.q_agent.has_active_guidance():
+            self.renderer.draw_guidance_indicators(self.q_agent)
 
         # Show wound status for agent
         wounds = [p for p, w in self.agent.wounds.items() if w]
@@ -1579,6 +1632,120 @@ class Game:
 
         # Threshold info
         self.renderer.draw_text("Roll 1-4 = Penalty  |  Roll 5-6 = Safe", SCREEN_WIDTH // 2, 350, COLOR_WHITE, 'small', center=True)
+
+    # ==================== CONVERSATION SYSTEM ====================
+
+    def _start_conversation(self, trigger: str, context: dict = None):
+        """Start a conversation and freeze combat."""
+        if self.conversation_ui.start_conversation(trigger, context):
+            self.previous_state = self.state
+            self.state = STATE_CONVERSATION
+
+    def _check_critical_moments(self):
+        """Check for critical moments that should trigger conversations."""
+        # Update cooldowns
+        self.critical_moment_detector.update()
+
+        # Check HP-based triggers
+        hp_damage = self.last_agent_hp - self.agent.hp
+        if hp_damage > 0:
+            # Check near-death (survived hit that brought us very low)
+            self.critical_moment_detector.check_near_death(self.agent, hp_damage)
+
+            # Check low HP (dropped below 25%)
+            self.critical_moment_detector.check_low_hp(self.agent)
+
+        self.last_agent_hp = self.agent.hp
+
+        # Check for first-time enemy encounters
+        self.critical_moment_detector.check_enemies_for_firsts(self.enemies)
+
+        # Process any pending triggers
+        if self.critical_moment_detector.has_pending_trigger():
+            trigger, data = self.critical_moment_detector.get_pending_trigger()
+            self._start_conversation(trigger, data)
+
+    def _check_close_call(self, attack_damage: int):
+        """Check if a dodged attack was a close call."""
+        if self.critical_moment_detector.check_close_call(self.agent, attack_damage):
+            trigger, data = self.critical_moment_detector.get_pending_trigger()
+            self._start_conversation(trigger, data)
+
+    def _update_conversation(self):
+        """Update conversation state."""
+        self.conversation_ui.update()
+
+        # Check if conversation ended
+        if not self.conversation_ui.is_active():
+            # Check for queued conversations
+            if self.conversation_ui.has_queued():
+                self.conversation_ui.start_next_queued()
+            else:
+                # Check if we need to go to death roll
+                if self.death_roll is not None and not self.death_penalty_applied:
+                    self.state = STATE_DEATH_ROLL
+                else:
+                    # Return to previous state
+                    self.state = self.previous_state or STATE_COMBAT
+                self.previous_state = None
+
+    def _handle_conversation_input(self, key):
+        """Handle input during conversation."""
+        choice = self.conversation_ui.handle_input(key)
+
+        if choice:
+            # Apply the choice effect
+            self._apply_choice_effect(choice)
+
+    def _apply_choice_effect(self, choice):
+        """Apply the effect of a player choice."""
+        if choice.effect_type == CHOICE_EFFECT_STRATEGY:
+            if choice.effect_value in ('aggressive', 'defensive', 'balanced'):
+                self.q_agent.apply_strategy_bias(choice.effect_value)
+                self.ai_dialogue.add_critical_thought(f"Strategy: {choice.effect_value.upper()}")
+        elif choice.effect_type == CHOICE_EFFECT_LEARNING_BOOST:
+            self.q_agent.apply_learning_boost()
+            self.ai_dialogue.add_critical_thought("Learning boost activated!")
+        elif choice.effect_type == CHOICE_EFFECT_ENCOURAGEMENT:
+            self.q_agent.apply_encouragement()
+            self.ai_dialogue.add_critical_thought("Feeling encouraged!")
+
+    def _render_conversation(self):
+        """Render the conversation state (frozen combat + conversation overlay)."""
+        # Draw the frozen combat scene
+        self.renderer.draw_ground()
+        self.renderer.draw_platforms(self.terrain_manager)
+        self.renderer.draw_hazards(self.terrain_manager)
+        self.renderer.draw_agent(self.agent)
+        for enemy in self.enemies:
+            self.renderer.draw_enemy(enemy)
+        self.renderer.draw_projectiles(self.combat_system.projectiles)
+
+        # Draw freeze overlay
+        self.renderer.draw_conversation_freeze_overlay()
+
+        # Draw UI elements
+        self.renderer.draw_floor_info(self.current_floor)
+        self.renderer.draw_agent_stats_compact(self.agent)
+
+        # Draw the conversation UI (portrait, dialogue, choices)
+        self.conversation_ui.render()
+
+    def _trigger_floor_victory(self):
+        """Trigger victory conversation."""
+        enemies_defeated = len([e for e in self.enemies if not e.is_alive()])
+        self.critical_moment_detector.trigger_victory(self.current_floor, enemies_defeated)
+        trigger, data = self.critical_moment_detector.get_pending_trigger()
+        # Queue it instead of immediate start (will show after floor transition)
+        self.conversation_ui.queue_conversation(trigger, data)
+
+    def _trigger_death(self, killer_type: str = None):
+        """Trigger death conversation."""
+        self.critical_moment_detector.trigger_death(self.current_floor, killer_type)
+        trigger, data = self.critical_moment_detector.get_pending_trigger()
+        self._start_conversation(trigger, data)
+
+    # ==================== END CONVERSATION SYSTEM ====================
 
     def _handle_skills_input(self, key):
         """Handle skills menu input."""

@@ -302,3 +302,63 @@ TRAINING_UNLOCK_DROP_CHANCE = 0.15  # 15% per enemy
 DEATH_ROLL_PENALTY_THRESHOLD = 4  # Roll 1-4 = penalty
 DICE_ROLL_FRAMES = 120  # 2 seconds of rolling animation
 DICE_RESULT_DISPLAY_FRAMES = 90  # 1.5 seconds to show result
+
+# Conversation system states
+STATE_CONVERSATION = 'conversation'
+
+# Portrait emotions
+EMOTION_NEUTRAL = 'neutral'
+EMOTION_WORRIED = 'worried'
+EMOTION_EXCITED = 'excited'
+EMOTION_HURT = 'hurt'
+EMOTION_QUESTIONING = 'questioning'
+EMOTION_DETERMINED = 'determined'
+
+# Emotion colors (tints for portrait)
+EMOTION_COLORS = {
+    EMOTION_NEUTRAL: (0, 255, 255),      # Cyan
+    EMOTION_WORRIED: (255, 255, 0),       # Yellow
+    EMOTION_EXCITED: (100, 255, 255),     # Bright cyan
+    EMOTION_HURT: (255, 100, 100),        # Red tint
+    EMOTION_QUESTIONING: (200, 100, 255), # Purple
+    EMOTION_DETERMINED: (255, 255, 255),  # Bright white
+}
+
+# Dialogue spam reduction
+DIALOGUE_GLOBAL_COOLDOWN = 15           # Frames between any messages
+DIALOGUE_COMBAT_COOLDOWN = 60           # Frames for combat category
+DIALOGUE_HP_WARNING_COOLDOWN = 300      # Frames for HP warnings (5 seconds)
+DIALOGUE_EXPLORATION_COOLDOWN = 120     # Frames for exploration messages
+DIALOGUE_MAX_COMBAT_MESSAGES = 15       # Max messages per combat
+
+# Critical moment triggers
+TRIGGER_LOW_HP = 'low_hp'               # HP drops below 25%
+TRIGGER_NEAR_DEATH = 'near_death'       # Survived with <10% HP
+TRIGGER_BOSS_ENCOUNTER = 'boss_encounter'  # First time seeing a boss type
+TRIGGER_FIRST_ENEMY_TYPE = 'first_enemy_type'  # First time seeing enemy type
+TRIGGER_VICTORY = 'victory'             # Floor cleared
+TRIGGER_DEATH = 'death'                 # Agent dies
+TRIGGER_CLOSE_CALL = 'close_call'       # Dodged lethal attack
+TRIGGER_STRATEGY_QUESTION = 'strategy_question'  # Random or 3+ floors since last
+
+# Critical moment cooldowns (in floors or frames)
+CLOSE_CALL_COOLDOWN_FRAMES = 1800       # 30 seconds at 60 FPS
+STRATEGY_QUESTION_MIN_FLOORS = 3        # Minimum floors between strategy questions
+
+# Conversation timing
+TYPEWRITER_SPEED = 2                    # Characters per frame
+CONVERSATION_CHOICE_TIMEOUT = 600       # 10 seconds to choose (0 = no timeout)
+
+# Player choice effects
+CHOICE_EFFECT_STRATEGY = 'strategy'
+CHOICE_EFFECT_LEARNING_BOOST = 'learning_boost'
+CHOICE_EFFECT_ENCOURAGEMENT = 'encouragement'
+
+# Effect durations (in frames)
+STRATEGY_BIAS_DURATION = 300            # 5 seconds
+LEARNING_BOOST_DURATION = 600           # 10 seconds
+LEARNING_BOOST_MULTIPLIER = 1.5         # 1.5x learning rate
+
+# Portrait dimensions
+PORTRAIT_SIZE = 128                     # Base size (pixels)
+PORTRAIT_DISPLAY_SIZE = 192             # Display size (scaled)

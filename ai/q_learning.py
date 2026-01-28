@@ -10,7 +10,8 @@ from config import (
     ACTION_TRAIN_STRENGTH, ACTION_TRAIN_INTELLIGENCE,
     ACTION_TRAIN_AGILITY, ACTION_TRAIN_DEFENSE, ACTION_TRAIN_LUCK,
     ACTION_MINIGAME_PRESS, ACTION_MINIGAME_WAIT,
-    TRAINABLE_STATS
+    TRAINABLE_STATS,
+    STRATEGY_BIAS_DURATION, LEARNING_BOOST_DURATION, LEARNING_BOOST_MULTIPLIER
 )
 
 
@@ -44,6 +45,14 @@ class QLearningAgent:
         self.total_learning_updates = 0
         self.lessons_learned = []  # List of key insights AI has learned
         self.player_taught_actions = 0  # Actions taught by player
+
+        # Player guidance effects (from conversation choices)
+        self.strategy_bias = None  # 'aggressive', 'defensive', or None
+        self.strategy_bias_timer = 0
+        self.learning_boost_active = False
+        self.learning_boost_timer = 0
+        self.encouragement_active = False
+        self.encouragement_timer = 0
 
     def _get_q_table(self, context: str) -> dict:
         """Get the Q-table for a context."""
@@ -81,15 +90,25 @@ class QLearningAgent:
         return {action: self.get_q(state, action, context) for action in actions}
 
     def choose_action(self, state: tuple, context: str = 'combat') -> int:
-        """Choose an action using epsilon-greedy policy."""
+        """Choose an action using epsilon-greedy policy with guidance effects."""
         actions = self._get_actions(context)
 
+        # Use effective epsilon (may be reduced by encouragement)
+        effective_epsilon = self.get_effective_epsilon()
+
         # Exploration: random action
-        if random.random() < self.epsilon:
+        if random.random() < effective_epsilon:
             action = random.choice(actions)
         else:
-            # Exploitation: choose best action
-            q_values = [self.get_q(state, a, context) for a in actions]
+            # Exploitation: choose best action (with strategy bias if active)
+            q_values = []
+            for a in actions:
+                q = self.get_q(state, a, context)
+                # Apply strategy bias in combat
+                if context == 'combat':
+                    q += self.get_strategy_bias_q_adjustment(a)
+                q_values.append(q)
+
             max_q = max(q_values)
 
             # If multiple actions have the same Q-value, choose randomly
@@ -113,7 +132,9 @@ class QLearningAgent:
             max_next_q = max(self.get_q(next_state, a, context) for a in actions)
             target = reward + self.gamma * max_next_q
 
-        new_q = current_q + self.alpha * (target - current_q)
+        # Use effective alpha (which may include learning boost)
+        effective_alpha = self.get_effective_alpha()
+        new_q = current_q + effective_alpha * (target - current_q)
         self.set_q(state, action, new_q, context)
 
         self.last_reward = reward
@@ -225,6 +246,104 @@ class QLearningAgent:
             'lessons': self.lessons_learned[-5:],  # Last 5 lessons
             'epsilon': self.epsilon,
             'player_taught': self.player_taught_actions
+        }
+
+    def update_guidance_effects(self, dt: int = 1):
+        """Update timers for player guidance effects."""
+        if self.strategy_bias_timer > 0:
+            self.strategy_bias_timer -= dt
+            if self.strategy_bias_timer <= 0:
+                self.strategy_bias = None
+
+        if self.learning_boost_timer > 0:
+            self.learning_boost_timer -= dt
+            if self.learning_boost_timer <= 0:
+                self.learning_boost_active = False
+
+        if self.encouragement_timer > 0:
+            self.encouragement_timer -= dt
+            if self.encouragement_timer <= 0:
+                self.encouragement_active = False
+
+    def apply_strategy_bias(self, strategy: str):
+        """Apply a temporary strategy bias from player guidance.
+
+        Args:
+            strategy: 'aggressive', 'defensive', or 'balanced'
+        """
+        if strategy in ('aggressive', 'defensive'):
+            self.strategy_bias = strategy
+            self.strategy_bias_timer = STRATEGY_BIAS_DURATION
+        else:
+            self.strategy_bias = None
+            self.strategy_bias_timer = 0
+
+    def apply_learning_boost(self):
+        """Apply a temporary learning rate boost."""
+        self.learning_boost_active = True
+        self.learning_boost_timer = LEARNING_BOOST_DURATION
+
+    def apply_encouragement(self):
+        """Apply encouragement effect (reduces exploration, trusts learned behaviors)."""
+        self.encouragement_active = True
+        self.encouragement_timer = LEARNING_BOOST_DURATION  # Same duration
+
+    def get_effective_alpha(self) -> float:
+        """Get the current effective learning rate (with boosts)."""
+        alpha = self.alpha
+        if self.learning_boost_active:
+            alpha *= LEARNING_BOOST_MULTIPLIER
+        return alpha
+
+    def get_effective_epsilon(self) -> float:
+        """Get the current effective exploration rate (with encouragement)."""
+        epsilon = self.epsilon
+        if self.encouragement_active:
+            # Reduce exploration by 50% when encouraged
+            epsilon *= 0.5
+        return epsilon
+
+    def get_strategy_bias_q_adjustment(self, action: int) -> float:
+        """Get Q-value adjustment for an action based on current strategy bias.
+
+        Returns a value to add to Q-value for biased action selection.
+        """
+        if self.strategy_bias is None:
+            return 0.0
+
+        attack_actions = [ACTION_ATTACK_HIGH, ACTION_ATTACK_MID, ACTION_ATTACK_LOW]
+        defensive_actions = [ACTION_RUN, ACTION_DODGE, ACTION_PARRY]
+
+        if self.strategy_bias == 'aggressive':
+            if action in attack_actions:
+                return 5.0
+            elif action == ACTION_CHARGE:
+                return 8.0
+            elif action in defensive_actions:
+                return -3.0
+        elif self.strategy_bias == 'defensive':
+            if action in defensive_actions:
+                return 5.0
+            elif action in attack_actions:
+                return -3.0
+
+        return 0.0
+
+    def has_active_guidance(self) -> bool:
+        """Check if any player guidance effect is active."""
+        return (self.strategy_bias is not None or
+                self.learning_boost_active or
+                self.encouragement_active)
+
+    def get_guidance_status(self) -> dict:
+        """Get current guidance effect status for display."""
+        return {
+            'strategy_bias': self.strategy_bias,
+            'strategy_timer': self.strategy_bias_timer,
+            'learning_boost': self.learning_boost_active,
+            'learning_timer': self.learning_boost_timer,
+            'encouragement': self.encouragement_active,
+            'encouragement_timer': self.encouragement_timer
         }
 
     def decay_epsilon(self):

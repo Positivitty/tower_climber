@@ -76,7 +76,8 @@ def load_game(agent, q_agent) -> dict:
 
         return {
             'current_floor': save_data.get('current_floor', 1),
-            'equipment': save_data.get('equipment')
+            'equipment': save_data.get('equipment'),
+            'critical_moments': save_data.get('critical_moments')
         }
 
     except Exception as e:

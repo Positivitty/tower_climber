@@ -1,7 +1,21 @@
 """AI dialogue system - the AI thinks out loud and asks for suggestions."""
 
 import random
-from config import TRAINABLE_STATS
+from config import (
+    TRAINABLE_STATS,
+    DIALOGUE_GLOBAL_COOLDOWN,
+    DIALOGUE_COMBAT_COOLDOWN,
+    DIALOGUE_HP_WARNING_COOLDOWN,
+    DIALOGUE_EXPLORATION_COOLDOWN,
+    DIALOGUE_MAX_COMBAT_MESSAGES
+)
+
+
+# Message categories for cooldown tracking
+CATEGORY_COMBAT = 'combat'
+CATEGORY_HP_WARNING = 'hp_warning'
+CATEGORY_EXPLORATION = 'exploration'
+CATEGORY_SYSTEM = 'system'  # Always shows (no cooldown)
 
 
 class AIDialogue:
@@ -13,11 +27,77 @@ class AIDialogue:
         self.waiting_for_suggestion = False
         self.suggestion_options = []
 
-    def add_thought(self, message: str):
-        """Add a thought message."""
+        # Spam reduction
+        self.global_cooldown = 0
+        self.category_cooldowns = {
+            CATEGORY_COMBAT: 0,
+            CATEGORY_HP_WARNING: 0,
+            CATEGORY_EXPLORATION: 0,
+        }
+        self.combat_message_count = 0
+
+    def update(self, dt: int = 1):
+        """Update cooldowns."""
+        if self.global_cooldown > 0:
+            self.global_cooldown -= dt
+
+        for category in self.category_cooldowns:
+            if self.category_cooldowns[category] > 0:
+                self.category_cooldowns[category] -= dt
+
+    def reset_for_combat(self):
+        """Reset combat-specific counters."""
+        self.combat_message_count = 0
+
+    def can_add_message(self, category: str = CATEGORY_SYSTEM, is_critical: bool = False) -> bool:
+        """Check if a message can be added based on cooldowns."""
+        # Critical messages always show
+        if is_critical or category == CATEGORY_SYSTEM:
+            return True
+
+        # Check global cooldown
+        if self.global_cooldown > 0:
+            return False
+
+        # Check category cooldown
+        if category in self.category_cooldowns:
+            if self.category_cooldowns[category] > 0:
+                return False
+
+        # Check combat message limit
+        if category == CATEGORY_COMBAT:
+            if self.combat_message_count >= DIALOGUE_MAX_COMBAT_MESSAGES:
+                return False
+
+        return True
+
+    def _apply_cooldowns(self, category: str):
+        """Apply cooldowns after adding a message."""
+        self.global_cooldown = DIALOGUE_GLOBAL_COOLDOWN
+
+        if category == CATEGORY_COMBAT:
+            self.category_cooldowns[CATEGORY_COMBAT] = DIALOGUE_COMBAT_COOLDOWN
+            self.combat_message_count += 1
+        elif category == CATEGORY_HP_WARNING:
+            self.category_cooldowns[CATEGORY_HP_WARNING] = DIALOGUE_HP_WARNING_COOLDOWN
+        elif category == CATEGORY_EXPLORATION:
+            self.category_cooldowns[CATEGORY_EXPLORATION] = DIALOGUE_EXPLORATION_COOLDOWN
+
+    def add_thought(self, message: str, category: str = CATEGORY_SYSTEM, is_critical: bool = False):
+        """Add a thought message with spam reduction."""
+        if not self.can_add_message(category, is_critical):
+            return False
+
         self.messages.append(message)
         if len(self.messages) > self.max_messages:
             self.messages.pop(0)
+
+        self._apply_cooldowns(category)
+        return True
+
+    def add_critical_thought(self, message: str):
+        """Add a critical thought that bypasses cooldowns."""
+        return self.add_thought(message, CATEGORY_SYSTEM, is_critical=True)
 
     def get_recent_messages(self, count: int = 4) -> list:
         """Get the most recent messages."""
@@ -28,54 +108,49 @@ class AIDialogue:
         self.messages = []
 
     def think_about_combat(self, state: tuple, action: str, q_values: dict):
-        """Generate thoughts about combat decisions."""
+        """Generate thoughts about combat decisions with spam reduction."""
         hp_names = ['high', 'medium', 'low', 'critical']
         enemy_names = ['melee', 'ranged', 'none']
         threat_names = ['low', 'medium', 'high']
 
-        hp = hp_names[state[0]]
-        enemy = enemy_names[state[1]]
-        threat = threat_names[state[2]]
-        in_range = state[3] == 1
+        hp = hp_names[state[0]] if state[0] < len(hp_names) else 'unknown'
+        enemy = enemy_names[state[1]] if state[1] < len(enemy_names) else 'unknown'
+        threat = threat_names[state[2]] if state[2] < len(threat_names) else 'unknown'
+        in_range = state[3] == 1 if len(state) > 3 else False
 
-        thoughts = []
-
-        # Analyze situation
+        # HP warnings use HP_WARNING category (longer cooldown)
         if hp == 'critical':
-            thoughts.append(f"My HP is critical! Need to be careful...")
+            self.add_thought("My HP is critical! Need to be careful...", CATEGORY_HP_WARNING)
         elif hp == 'low':
-            thoughts.append(f"HP getting low. Should I retreat?")
+            self.add_thought("HP getting low. Should I retreat?", CATEGORY_HP_WARNING)
 
+        # Combat observations use COMBAT category
         if enemy == 'ranged' and not in_range:
-            thoughts.append("Ranged enemy - need to close the distance or dodge.")
+            self.add_thought("Ranged enemy - need to close distance.", CATEGORY_COMBAT)
         elif enemy == 'melee' and in_range:
-            thoughts.append("Melee enemy in range - fight or flight?")
+            self.add_thought("Melee enemy in range.", CATEGORY_COMBAT)
 
         if threat == 'high':
-            thoughts.append("High threat level detected!")
+            self.add_thought("High threat detected!", CATEGORY_COMBAT)
 
-        # Explain decision
-        attack_q = q_values.get(0, 0)
-        run_q = q_values.get(1, 0)
+        # Only occasionally explain the decision (reduce spam)
+        if random.random() < 0.2:  # 20% chance to explain
+            attack_q = q_values.get(0, 0)
+            run_q = q_values.get(1, 0)
 
-        if action == 'ATTACK':
-            if attack_q > run_q:
-                thoughts.append(f"ATTACK looks best (Q:{attack_q:.1f} vs {run_q:.1f}). Engaging!")
-            else:
-                thoughts.append("Exploring: trying ATTACK to learn more.")
-        else:
-            if run_q > attack_q:
-                thoughts.append(f"RUN is safer (Q:{run_q:.1f} vs {attack_q:.1f}). Retreating!")
-            else:
-                thoughts.append("Exploring: trying RUN to see what happens.")
-
-        for thought in thoughts[-2:]:  # Last 2 thoughts
-            self.add_thought(thought)
+            if 'ATTACK' in action or 'ATK' in action:
+                if attack_q > run_q:
+                    self.add_thought(f"Attacking (Q:{attack_q:.1f}).", CATEGORY_COMBAT)
+            elif action == 'RUN':
+                if run_q > attack_q:
+                    self.add_thought(f"Retreating (Q:{run_q:.1f}).", CATEGORY_COMBAT)
+            elif action == 'DODGE':
+                self.add_thought("Dodging!", CATEGORY_COMBAT)
+            elif action == 'PARRY':
+                self.add_thought("Parrying!", CATEGORY_COMBAT)
 
     def think_about_base(self, agent, epsilon: float):
         """Generate thoughts about base decisions."""
-        thoughts = []
-
         # Analyze stats
         stats = {
             'strength': agent.strength,
@@ -88,67 +163,61 @@ class AIDialogue:
         min_stat = min(stats, key=stats.get)
         max_stat = max(stats, key=stats.get)
 
-        thoughts.append(f"At base camp. Time to decide what to do...")
+        self.add_critical_thought("At base camp.")
 
         if stats[min_stat] < stats[max_stat] - 3:
-            thoughts.append(f"My {min_stat} ({stats[min_stat]}) is much lower than {max_stat} ({stats[max_stat]}).")
+            self.add_thought(f"My {min_stat} ({stats[min_stat]}) is lower than {max_stat} ({stats[max_stat]}).", CATEGORY_EXPLORATION)
 
         if epsilon > 0.5:
-            thoughts.append("Still learning a lot - exploring different strategies.")
+            self.add_thought("Still exploring strategies.", CATEGORY_EXPLORATION)
         elif epsilon > 0.2:
-            thoughts.append("Getting better at this. Starting to know what works.")
+            self.add_thought("Getting better at this.", CATEGORY_EXPLORATION)
         else:
-            thoughts.append("I've learned a lot! Making informed decisions now.")
-
-        for thought in thoughts:
-            self.add_thought(thought)
+            self.add_thought("Making informed decisions now.", CATEGORY_EXPLORATION)
 
     def think_about_training(self, stat: str, difficulty: int):
         """Generate thoughts about starting training."""
         stat_descriptions = {
-            'strength': "Time to lift some weights! Need to time this right...",
-            'intelligence': "Pattern memory training. Let me focus...",
-            'agility': "Reaction training! Gotta be fast...",
-            'defense': "Block training. Need to time my blocks perfectly...",
-            'luck': "Dice game! Let's see if luck is on my side..."
+            'strength': "Time to lift some weights!",
+            'intelligence': "Pattern memory training.",
+            'agility': "Reaction training!",
+            'defense': "Block training.",
+            'luck': "Dice game!"
         }
 
-        self.add_thought(f"Training {stat.upper()} (difficulty {difficulty})...")
-        self.add_thought(stat_descriptions.get(stat, "Here we go..."))
+        self.add_critical_thought(f"Training {stat.upper()} (difficulty {difficulty})...")
+        self.add_thought(stat_descriptions.get(stat, "Here we go..."), CATEGORY_EXPLORATION)
 
     def think_about_minigame(self, game_state: tuple, action: str, stat: str):
-        """Generate thoughts during a mini-game."""
+        """Generate thoughts during a mini-game (reduced frequency)."""
+        # Only generate thoughts occasionally to reduce spam
+        if random.random() > 0.15:  # 15% chance
+            return
+
         if stat == 'strength':
-            if game_state[1] == 1:  # In target
-                if game_state[2] == 1:  # In perfect zone
-                    self.add_thought("Perfect zone! NOW!")
-                else:
-                    self.add_thought("In the target zone...")
-            elif game_state[3] == 1:  # Approaching
-                self.add_thought("Getting closer to target...")
+            if len(game_state) > 2 and game_state[2] == 1:  # In perfect zone
+                self.add_thought("Perfect zone! NOW!", CATEGORY_COMBAT)
+            elif len(game_state) > 1 and game_state[1] == 1:  # In target
+                self.add_thought("In the zone...", CATEGORY_COMBAT)
 
         elif stat == 'agility':
-            if game_state[0] == 1:  # Signal active
-                self.add_thought("SIGNAL! React!")
-            else:
-                self.add_thought("Waiting for signal...")
+            if len(game_state) > 0 and game_state[0] == 1:  # Signal active
+                self.add_thought("SIGNAL!", CATEGORY_COMBAT)
 
         elif stat == 'defense':
-            if game_state[2] == 1:  # In block window
-                self.add_thought("Block window! NOW!")
-            elif game_state[0] == 1:  # Attack active
-                self.add_thought("Attack incoming...")
+            if len(game_state) > 2 and game_state[2] == 1:  # In block window
+                self.add_thought("Block NOW!", CATEGORY_COMBAT)
 
     def think_about_result(self, success: bool, perfect: bool, message: str):
         """Generate thoughts about a training result."""
         if perfect:
-            self.add_thought("PERFECT! I'm getting good at this!")
+            self.add_critical_thought("PERFECT!")
         elif success:
-            self.add_thought("Success! That worked out.")
+            self.add_critical_thought("Success!")
         else:
-            self.add_thought("Failed... Need more practice.")
+            self.add_critical_thought("Failed...")
 
-        self.add_thought(message)
+        self.add_critical_thought(message)
 
     def ask_for_suggestion(self, context: str, options: list):
         """Ask the player for a suggestion."""
