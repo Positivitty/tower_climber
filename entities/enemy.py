@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from systems.physics import PhysicsBody
 from systems.status_effects import StatusEffectManager
+import random
 from config import (
     GROUND_Y, ENEMY_MELEE_HP, ENEMY_RANGED_HP,
     MELEE_DAMAGE, RANGED_DAMAGE, ENEMY_MELEE_SPEED, ENEMY_RANGED_SPEED,
@@ -19,7 +20,9 @@ from config import (
     COLOR_TANK, COLOR_ASSASSIN, COLOR_BOSS,
     BOSS_HP_MULT, BOSS_DAMAGE_MULT, BOSS_SPECIAL_COOLDOWN, BOSS_ENRAGE_THRESHOLD,
     ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
-    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY
+    COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
+    ENEMY_JUMP_COOLDOWN, ENEMY_JUMP_HEIGHT_THRESHOLD, ENEMY_JUMP_PROBABILITY,
+    ENEMY_TANK_JUMP_PROBABILITY, ENEMY_ASSASSIN_JUMP_PROBABILITY, ENEMY_RANGED_JUMP_PROBABILITY
 )
 
 
@@ -172,9 +175,15 @@ class MeleeEnemy(Enemy):
         """Chase the player and attack when in range. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
-        
-        # Check if player is significantly above us
-        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
+
+        # Check if player is significantly above us (with height threshold and probability)
+        height_diff = self.y - agent.y
+        should_jump = (
+            height_diff > ENEMY_JUMP_HEIGHT_THRESHOLD and
+            self.grounded and
+            self.jump_cooldown <= 0 and
+            random.random() < ENEMY_JUMP_PROBABILITY
+        )
 
         if distance <= ATTACK_RANGE:
             # In range - attack
@@ -184,15 +193,16 @@ class MeleeEnemy(Enemy):
         else:
             # Chase the player
             self.vx = direction * self.get_speed()
-            
+
             # Jump if player is on higher platform
             if should_jump:
                 self.vy = -12  # Jump force
                 self.grounded = False
-                self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+                self.jump_cooldown = ENEMY_JUMP_COOLDOWN
 
         # Decrement jump cooldown
-        self.jump_cooldown -= 1
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
 
 
 class RangedEnemy(Enemy):
@@ -215,9 +225,15 @@ class RangedEnemy(Enemy):
         retreat_speed = ENEMY_RANGED_RETREAT_SPEED
         if self.wounds[BODY_PART_LEGS]:
             retreat_speed *= LEGS_WOUND_SPEED_REDUCTION
-        
-        # Check if player is significantly above us
-        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
+
+        # Check if player is significantly above us (ranged prefers distance over height)
+        height_diff = self.y - agent.y
+        should_jump = (
+            height_diff > ENEMY_JUMP_HEIGHT_THRESHOLD and
+            self.grounded and
+            self.jump_cooldown <= 0 and
+            random.random() < ENEMY_RANGED_JUMP_PROBABILITY
+        )
 
         # Try to maintain preferred distance
         if distance < self.preferred_distance - 20:
@@ -232,15 +248,16 @@ class RangedEnemy(Enemy):
             if self.can_attack():
                 self.start_attack()
                 self.projectile_ready = True
-        
+
         # Jump if player is on higher platform
         if should_jump:
             self.vy = -12  # Jump force
             self.grounded = False
-            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+            self.jump_cooldown = ENEMY_JUMP_COOLDOWN
 
         # Decrement jump cooldown
-        self.jump_cooldown -= 1
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
 
     def should_spawn_projectile(self) -> bool:
         """Check if a projectile should be spawned this frame."""
@@ -287,9 +304,15 @@ class TankEnemy(Enemy):
         """Slowly advance and attack when in range. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
-        
-        # Check if player is significantly above us
-        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
+
+        # Check if player is significantly above us (tanks rarely jump)
+        height_diff = self.y - agent.y
+        should_jump = (
+            height_diff > ENEMY_JUMP_HEIGHT_THRESHOLD and
+            self.grounded and
+            self.jump_cooldown <= 0 and
+            random.random() < ENEMY_TANK_JUMP_PROBABILITY
+        )
 
         if distance <= ATTACK_RANGE:
             # In range - attack
@@ -299,15 +322,16 @@ class TankEnemy(Enemy):
         else:
             # Slowly advance
             self.vx = direction * self.get_speed()
-        
-        # Jump if player is on higher platform
+
+        # Jump if player is on higher platform (rarely for tanks)
         if should_jump:
-            self.vy = -12  # Jump force
+            self.vy = -10  # Weaker jump for heavy tank
             self.grounded = False
-            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+            self.jump_cooldown = ENEMY_JUMP_COOLDOWN * 2  # Even longer cooldown for tanks
 
         # Decrement jump cooldown
-        self.jump_cooldown -= 1
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
 
 
 class AssassinEnemy(Enemy):
@@ -350,9 +374,15 @@ class AssassinEnemy(Enemy):
         """Rush in, attack, then retreat briefly. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
-        
-        # Check if player is significantly above us
-        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
+
+        # Check if player is significantly above us (assassins jump more often)
+        height_diff = self.y - agent.y
+        should_jump = (
+            height_diff > ENEMY_JUMP_HEIGHT_THRESHOLD and
+            self.grounded and
+            self.jump_cooldown <= 0 and
+            random.random() < ENEMY_ASSASSIN_JUMP_PROBABILITY
+        )
 
         # Handle retreat behavior
         if self.retreating:
@@ -363,7 +393,8 @@ class AssassinEnemy(Enemy):
                 # Move away from agent
                 self.vx = -direction * self.get_speed() * 0.8
                 # Decrement jump cooldown
-                self.jump_cooldown -= 1
+                if self.jump_cooldown > 0:
+                    self.jump_cooldown -= 1
                 return
 
         if distance <= ATTACK_RANGE:
@@ -377,15 +408,16 @@ class AssassinEnemy(Enemy):
         else:
             # Rush toward player
             self.vx = direction * self.get_speed()
-        
+
         # Jump if player is on higher platform
         if should_jump:
-            self.vy = -12  # Jump force
+            self.vy = -14  # Stronger jump for agile assassin
             self.grounded = False
-            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+            self.jump_cooldown = ENEMY_JUMP_COOLDOWN // 2  # Shorter cooldown for assassins
 
         # Decrement jump cooldown
-        self.jump_cooldown -= 1
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
 
 
 class BossEnemy(Enemy):

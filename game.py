@@ -16,6 +16,7 @@ from config import (
     BOSS_FLOOR_INTERVAL, ELEMENT_FIRE, ELEMENT_ICE, ELEMENT_POISON,
     COLOR_FIRE_ENEMY, COLOR_ICE_ENEMY, COLOR_POISON_ENEMY,
     REWARD_SUCCESSFUL_DODGE, REWARD_HAZARD_DAMAGE,
+    REWARD_USELESS_JUMP, REWARD_PLATFORM_REACHED,
     TRIGGER_LOW_HP, TRIGGER_NEAR_DEATH, TRIGGER_BOSS_ENCOUNTER,
     TRIGGER_FIRST_ENEMY_TYPE, TRIGGER_VICTORY, TRIGGER_DEATH,
     TRIGGER_CLOSE_CALL, TRIGGER_STRATEGY_QUESTION,
@@ -124,6 +125,11 @@ class Game:
         self.critical_moment_detector = CriticalMomentDetector()
         self.previous_state = None  # State to return to after conversation
         self.last_agent_hp = self.agent.hp  # Track HP changes for triggers
+
+        # Jump tracking for rewards
+        self.agent_jumped_this_tick = False
+        self.agent_was_grounded = True
+        self.agent_start_platform = None
 
         # Mini-game state
         self.current_minigame = None
@@ -446,6 +452,11 @@ class Game:
         elif action == ACTION_JUMP:
             # Jump to platform
             if self.agent.can_jump():
+                # Track jump for reward calculation
+                self.agent_was_grounded = self.agent.grounded
+                self.agent_start_platform = self.agent.current_platform
+                self.agent_jumped_this_tick = True
+
                 self.agent.jump()
                 # Move toward or away from enemy while jumping
                 if nearest:
@@ -456,6 +467,10 @@ class Game:
                     else:
                         # Jump toward
                         self.agent.move_toward(nearest.x)
+            else:
+                # Tried to jump but couldn't (already in air or no stamina)
+                # This is a useless jump attempt
+                self.combat_system.pending_rewards += REWARD_USELESS_JUMP
 
     def _update_char_create(self):
         pass  # Handled by events
@@ -528,11 +543,26 @@ class Game:
         self.minigame_state = mg_state
 
     def _update_combat(self):
+        # Track agent state before update for jump reward
+        was_in_air = not self.agent.grounded
+
         # Update agent and enemies with terrain for platform collision
         self.agent.update(self.terrain_manager)
         for enemy in self.enemies:
             if enemy.is_alive():
                 enemy.update(self.agent, self.terrain_manager)
+
+        # Check for platform landing reward after jump
+        if was_in_air and self.agent.grounded:
+            # Agent just landed
+            if self.agent.current_platform is not None:
+                # Landed on a platform (not ground)
+                if self.agent_start_platform != self.agent.current_platform:
+                    # Reached a NEW platform - reward!
+                    self.combat_system.pending_rewards += REWARD_PLATFORM_REACHED
+            # Reset jump tracking
+            self.agent_jumped_this_tick = False
+            self.agent_start_platform = None
 
         # Update terrain (crumbling platforms, geyser timers)
         all_entities = [self.agent] + [e for e in self.enemies if e.is_alive()]

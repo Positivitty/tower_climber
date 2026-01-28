@@ -106,6 +106,8 @@ REWARD_SUCCESSFUL_PARRY = 12    # Parried incoming attack
 REWARD_PARRY_COUNTER = 15       # Counter-attack after parry
 REWARD_HAZARD_DAMAGE = -5       # Took hazard damage
 REWARD_HIGH_GROUND_KILL = 10    # Kill from elevated position
+REWARD_USELESS_JUMP = -1        # Jumped without purpose (no platform, already airborne)
+REWARD_PLATFORM_REACHED = 3     # Successfully landed on a platform
 
 # Combat Actions
 ACTION_ATTACK_HIGH = 0   # Aim for head - critical damage, can stun
@@ -144,6 +146,16 @@ STAMINA_REGEN_DELAY_FRAMES = 30 # Delay after action before regen
 # Jump mechanics
 JUMP_FORCE = -12                # Initial vertical velocity
 JUMP_STAMINA_COST = 10
+
+# Jump spam prevention
+ENEMY_JUMP_COOLDOWN = 90        # Frames between enemy jumps (1.5 seconds)
+ENEMY_JUMP_HEIGHT_THRESHOLD = 50  # Only jump if agent is this many pixels higher
+ENEMY_JUMP_PROBABILITY = 0.4    # 40% chance to jump when conditions met
+
+# Enemy type jump probabilities (overrides default)
+ENEMY_TANK_JUMP_PROBABILITY = 0.15      # Tanks rarely jump
+ENEMY_ASSASSIN_JUMP_PROBABILITY = 0.6   # Assassins jump more often
+ENEMY_RANGED_JUMP_PROBABILITY = 0.25    # Ranged prefers distance over height
 
 # Height advantage
 HIGH_GROUND_DAMAGE_BONUS = 0.15   # +15% damage when above enemy
