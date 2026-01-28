@@ -365,12 +365,24 @@ class BackgroundManager:
         self._generate_backgrounds()
 
     def _generate_backgrounds(self):
-        """Generate background surfaces for each theme."""
-        self.backgrounds['dungeon'] = self._create_dungeon_bg()
-        self.backgrounds['cave'] = self._create_cave_bg()
-        self.backgrounds['tower'] = self._create_tower_bg()
-        self.backgrounds['sky'] = self._create_sky_bg()
-        self.backgrounds['void'] = self._create_void_bg()
+        """Load backgrounds from files or generate fallbacks."""
+        # Try to load custom backgrounds, fall back to generated ones
+        themes = ['dungeon', 'cave', 'tower', 'sky', 'void', 'main_menu']
+        generators = {
+            'dungeon': self._create_dungeon_bg,
+            'cave': self._create_cave_bg,
+            'tower': self._create_tower_bg,
+            'sky': self._create_sky_bg,
+            'void': self._create_void_bg,
+            'main_menu': self._create_dungeon_bg,  # fallback
+        }
+
+        for theme in themes:
+            bg_path = os.path.join(BACKGROUNDS_DIR, f'{theme}.png')
+            if os.path.exists(bg_path):
+                self.backgrounds[theme] = pygame.image.load(bg_path).convert()
+            else:
+                self.backgrounds[theme] = generators[theme]()
 
     def _create_dungeon_bg(self) -> pygame.Surface:
         """Create dark dungeon background."""
@@ -611,45 +623,94 @@ class SpriteManager:
         # Character sprites (32x48 pixels)
         char_width, char_height = 32, 48
 
-        # Agent sprites
+        # Agent sprites - try to load from files first
         agent_primary = (70, 130, 200)
         agent_secondary = (50, 100, 160)
-        self.sprites['agent_idle'] = self.generator.create_character_sprite(
-            char_width, char_height, agent_primary, agent_secondary, is_enemy=False)
-        self.sprites['agent_attack_right'] = self.generator.create_attack_sprite(
-            char_width, char_height, agent_primary, agent_secondary, facing=1, is_enemy=False)
-        self.sprites['agent_attack_left'] = self.generator.create_attack_sprite(
-            char_width, char_height, agent_primary, agent_secondary, facing=-1, is_enemy=False)
-        self.sprites['agent_dodge'] = self.generator.create_dodge_sprite(
-            char_width, char_height, agent_primary, agent_secondary)
 
-        # Enemy melee sprites
+        # Load idle sprite
+        idle_path = os.path.join(SPRITES_DIR, 'agent_idle.png')
+        if os.path.exists(idle_path):
+            self.sprites['agent_idle'] = pygame.image.load(idle_path).convert_alpha()
+        else:
+            self.sprites['agent_idle'] = self.generator.create_character_sprite(
+                char_width, char_height, agent_primary, agent_secondary, is_enemy=False)
+
+        # Load attack sprite
+        attack_path = os.path.join(SPRITES_DIR, 'agent_attack.png')
+        if os.path.exists(attack_path):
+            attack_sprite = pygame.image.load(attack_path).convert_alpha()
+            self.sprites['agent_attack_right'] = attack_sprite
+            self.sprites['agent_attack_left'] = pygame.transform.flip(attack_sprite, True, False)
+        else:
+            self.sprites['agent_attack_right'] = self.generator.create_attack_sprite(
+                char_width, char_height, agent_primary, agent_secondary, facing=1, is_enemy=False)
+            self.sprites['agent_attack_left'] = self.generator.create_attack_sprite(
+                char_width, char_height, agent_primary, agent_secondary, facing=-1, is_enemy=False)
+
+        # Load dodge sprite
+        dodge_path = os.path.join(SPRITES_DIR, 'agent_dodge.png')
+        if os.path.exists(dodge_path):
+            self.sprites['agent_dodge'] = pygame.image.load(dodge_path).convert_alpha()
+        else:
+            self.sprites['agent_dodge'] = self.generator.create_dodge_sprite(
+                char_width, char_height, agent_primary, agent_secondary)
+
+        # Enemy melee sprites - load from file or generate
         enemy_primary = (200, 70, 70)
         enemy_secondary = (160, 50, 50)
-        self.sprites['enemy_melee_idle'] = self.generator.create_character_sprite(
-            char_width, char_height, enemy_primary, enemy_secondary, is_enemy=True)
+        melee_path = os.path.join(SPRITES_DIR, 'enemy_melee.png')
+        if os.path.exists(melee_path):
+            self.sprites['enemy_melee_idle'] = pygame.image.load(melee_path).convert_alpha()
+        else:
+            self.sprites['enemy_melee_idle'] = self.generator.create_character_sprite(
+                char_width, char_height, enemy_primary, enemy_secondary, is_enemy=True)
         self.sprites['enemy_melee_attack_right'] = self.generator.create_attack_sprite(
             char_width, char_height, enemy_primary, enemy_secondary, facing=1, is_enemy=True)
         self.sprites['enemy_melee_attack_left'] = self.generator.create_attack_sprite(
             char_width, char_height, enemy_primary, enemy_secondary, facing=-1, is_enemy=True)
 
-        # Enemy ranged sprites (slightly different color)
+        # Enemy ranged sprites - load from file or generate
         ranged_primary = (180, 100, 70)
         ranged_secondary = (140, 80, 50)
-        self.sprites['enemy_ranged_idle'] = self.generator.create_character_sprite(
-            char_width, char_height, ranged_primary, ranged_secondary, is_enemy=True)
+        ranged_path = os.path.join(SPRITES_DIR, 'enemy_ranged.png')
+        if os.path.exists(ranged_path):
+            self.sprites['enemy_ranged_idle'] = pygame.image.load(ranged_path).convert_alpha()
+        else:
+            self.sprites['enemy_ranged_idle'] = self.generator.create_character_sprite(
+                char_width, char_height, ranged_primary, ranged_secondary, is_enemy=True)
 
-        # Tank enemy sprites
+        # Tank enemy sprites - load from file or generate
         tank_primary = (100, 100, 150)
         tank_secondary = (80, 80, 120)
-        self.sprites['enemy_tank_idle'] = self.generator.create_character_sprite(
-            int(char_width * 1.3), int(char_height * 1.2), tank_primary, tank_secondary, is_enemy=True)
+        tank_path = os.path.join(SPRITES_DIR, 'enemy_tank.png')
+        if os.path.exists(tank_path):
+            self.sprites['enemy_tank_idle'] = pygame.image.load(tank_path).convert_alpha()
+        else:
+            self.sprites['enemy_tank_idle'] = self.generator.create_character_sprite(
+                int(char_width * 1.3), int(char_height * 1.2), tank_primary, tank_secondary, is_enemy=True)
 
-        # Assassin enemy sprites
+        # Assassin enemy sprites - load from file or generate
         assassin_primary = (80, 0, 80)
         assassin_secondary = (60, 0, 60)
-        self.sprites['enemy_assassin_idle'] = self.generator.create_character_sprite(
-            int(char_width * 0.9), char_height, assassin_primary, assassin_secondary, is_enemy=True)
+        assassin_path = os.path.join(SPRITES_DIR, 'enemy_assassin.png')
+        if os.path.exists(assassin_path):
+            self.sprites['enemy_assassin_idle'] = pygame.image.load(assassin_path).convert_alpha()
+        else:
+            self.sprites['enemy_assassin_idle'] = self.generator.create_character_sprite(
+                int(char_width * 0.9), char_height, assassin_primary, assassin_secondary, is_enemy=True)
+
+        # Boss sprites - load from files
+        boss_fire_path = os.path.join(SPRITES_DIR, 'boss_fire.png')
+        if os.path.exists(boss_fire_path):
+            self.sprites['boss_fire'] = pygame.image.load(boss_fire_path).convert_alpha()
+
+        boss_ice_path = os.path.join(SPRITES_DIR, 'boss_ice.png')
+        if os.path.exists(boss_ice_path):
+            self.sprites['boss_ice'] = pygame.image.load(boss_ice_path).convert_alpha()
+
+        boss_poison_path = os.path.join(SPRITES_DIR, 'boss_poison.png')
+        if os.path.exists(boss_poison_path):
+            self.sprites['boss_poison'] = pygame.image.load(boss_poison_path).convert_alpha()
 
         # Platform tiles
         for ptype in ['wooden', 'stone', 'crumbling']:

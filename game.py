@@ -1077,45 +1077,47 @@ class Game:
         pygame.display.flip()
 
     def _render_main_menu(self):
-        # Title
+        # Draw custom main menu background
+        from ui.sprites import background_manager
+        if background_manager and 'main_menu' in background_manager.backgrounds:
+            self.screen.blit(background_manager.backgrounds['main_menu'], (0, 0))
+
+        # Title with shadow for visibility
+        self.renderer.draw_text("TOWER CLIMBER", SCREEN_WIDTH // 2 + 2, 82,
+                                (0, 0, 0), 'large', center=True)
         self.renderer.draw_text("TOWER CLIMBER", SCREEN_WIDTH // 2, 80,
                                 COLOR_YELLOW, 'large', center=True)
+        self.renderer.draw_text("AI Adventure", SCREEN_WIDTH // 2 + 1, 116,
+                                (0, 0, 0), 'medium', center=True)
         self.renderer.draw_text("AI Adventure", SCREEN_WIDTH // 2, 115,
                                 COLOR_WHITE, 'medium', center=True)
 
-        # Draw a simple tower graphic
-        tower_x = SCREEN_WIDTH // 2
-        tower_y = 200
-        # Tower base
-        pygame.draw.rect(self.screen, (80, 60, 40), (tower_x - 40, tower_y, 80, 120))
-        # Tower top
-        pygame.draw.polygon(self.screen, (100, 80, 60), [
-            (tower_x - 50, tower_y),
-            (tower_x, tower_y - 40),
-            (tower_x + 50, tower_y)
-        ])
-        # Windows
-        for i in range(3):
-            pygame.draw.rect(self.screen, COLOR_YELLOW, (tower_x - 15, tower_y + 20 + i * 35, 30, 20))
-        # Door
-        pygame.draw.rect(self.screen, (60, 40, 20), (tower_x - 15, tower_y + 90, 30, 30))
-
         # Menu options
-        menu_y = 350
+        menu_y = 380
         if self.has_save:
             options = ["Continue", "New Game", "Quit"]
         else:
             options = ["New Game", "Quit"]
 
+        # Draw semi-transparent box behind menu
+        menu_box = pygame.Surface((200, len(options) * 35 + 20), pygame.SRCALPHA)
+        menu_box.fill((0, 0, 0, 150))
+        self.screen.blit(menu_box, (SCREEN_WIDTH // 2 - 100, menu_y - 10))
+
         for i, option in enumerate(options):
             color = COLOR_YELLOW if i == self.main_menu_selection else COLOR_WHITE
             prefix = "> " if i == self.main_menu_selection else "  "
+            # Shadow
+            self.renderer.draw_text(f"{prefix}{option}", SCREEN_WIDTH // 2 + 1, menu_y + i * 35 + 1,
+                                    (0, 0, 0), 'medium', center=True)
             self.renderer.draw_text(f"{prefix}{option}", SCREEN_WIDTH // 2, menu_y + i * 35,
                                     color, 'medium', center=True)
 
-        # Controls hint
-        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2, 480,
-                                COLOR_GRAY, 'small', center=True)
+        # Controls hint with shadow
+        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2 + 1, 521,
+                                (0, 0, 0), 'small', center=True)
+        self.renderer.draw_text("UP/DOWN to select, ENTER to confirm", SCREEN_WIDTH // 2, 520,
+                                COLOR_CYAN, 'small', center=True)
 
     def _render_confirm_new(self):
         self.renderer.draw_text("START NEW GAME?", SCREEN_WIDTH // 2, 100,
@@ -1179,9 +1181,9 @@ class Game:
         class_name = CLASSES[self.agent.char_class]['name']
         self.renderer.draw_text(f"{race_name} {class_name}", SCREEN_WIDTH // 2, 75, COLOR_WHITE, 'small', center=True)
 
-        # Draw agent in center
+        # Draw agent in center (positioned lower to not overlap menu)
         self.agent.x = SCREEN_WIDTH // 2
-        self.agent.y = GROUND_Y - 100
+        self.agent.y = GROUND_Y
         self.renderer.draw_ground()
         self.renderer.draw_agent(self.agent)
 

@@ -16,7 +16,8 @@ from config import (
     COLOR_LAVA, COLOR_SPIKES, COLOR_POISON_POOL, COLOR_ICE_PATCH,
     MAX_STAMINA
 )
-from ui.sprites import sprite_manager, background_manager, init_sprite_system
+from ui import sprites
+from ui.sprites import sprite_manager, init_sprite_system
 
 
 class Renderer:
@@ -39,8 +40,8 @@ class Renderer:
 
     def clear(self, use_theme: bool = True):
         """Clear the screen with background color or themed background."""
-        if self.use_themed_backgrounds and use_theme and background_manager:
-            background_manager.draw(self.screen, self.current_floor)
+        if self.use_themed_backgrounds and use_theme and sprites.background_manager:
+            sprites.background_manager.draw(self.screen, self.current_floor)
         else:
             # Fallback gradient background
             for y in range(SCREEN_HEIGHT):
@@ -55,8 +56,8 @@ class Renderer:
     def draw_ground(self):
         """Draw the ground with themed textures."""
         # Get theme-appropriate ground colors
-        if background_manager:
-            theme = background_manager.current_theme
+        if sprites.background_manager:
+            theme = sprites.background_manager.current_theme
         else:
             theme = 'dungeon'
 
@@ -219,14 +220,69 @@ class Renderer:
     def draw_agent(self, agent):
         """Draw the player's agent."""
         hp_ratio = agent.hp / agent.max_hp if agent.max_hp > 0 else 0
-        self.draw_sprite(
-            agent.x, agent.y,
-            agent.facing,
-            SPRITE_AGENT_PRIMARY, SPRITE_AGENT_SECONDARY,
-            attacking=agent.is_attacking,
-            hp_ratio=hp_ratio,
-            is_enemy=False
-        )
+        x = int(agent.x)
+        y = int(agent.y)
+
+        # Scale factor for sprites (pixel art looks good at integer scales)
+        SPRITE_SCALE = 2
+
+        # Try to use sprite images
+        sprite = None
+        if agent.is_dodging:
+            sprite = sprite_manager.get_sprite('agent_dodge')
+        elif agent.is_attacking:
+            if agent.facing > 0:
+                sprite = sprite_manager.get_sprite('agent_attack_right')
+            else:
+                sprite = sprite_manager.get_sprite('agent_attack_left')
+        else:
+            sprite = sprite_manager.get_sprite('agent_idle')
+
+        if sprite:
+            # Scale up the sprite
+            scaled_width = sprite.get_width() * SPRITE_SCALE
+            scaled_height = sprite.get_height() * SPRITE_SCALE
+            sprite = pygame.transform.scale(sprite, (scaled_width, scaled_height))
+
+            # Draw shadow
+            shadow_width = scaled_width + 8
+            pygame.draw.ellipse(
+                self.screen,
+                (30, 30, 30),
+                (x - shadow_width // 2, y - 4, shadow_width, 8)
+            )
+
+            # Flip sprite if facing left (for idle sprite)
+            if agent.facing < 0 and not agent.is_attacking:
+                sprite = pygame.transform.flip(sprite, True, False)
+
+            # Position sprite (center horizontally, bottom at y)
+            sprite_x = x - sprite.get_width() // 2
+            sprite_y = y - sprite.get_height()
+            self.screen.blit(sprite, (sprite_x, sprite_y))
+
+            # Draw HP bar above sprite
+            bar_width = 30
+            bar_height = 4
+            bar_x = x - bar_width // 2
+            bar_y = sprite_y - 10
+
+            pygame.draw.rect(self.screen, (40, 40, 40),
+                             (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
+            pygame.draw.rect(self.screen, COLOR_RED,
+                             (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(self.screen, COLOR_GREEN,
+                             (bar_x, bar_y, int(bar_width * hp_ratio), bar_height))
+        else:
+            # Fallback to procedural drawing
+            self.draw_sprite(
+                agent.x, agent.y,
+                agent.facing,
+                SPRITE_AGENT_PRIMARY, SPRITE_AGENT_SECONDARY,
+                attacking=agent.is_attacking,
+                hp_ratio=hp_ratio,
+                is_enemy=False
+            )
 
         # Draw status effects on agent
         self._draw_status_effects(agent)
@@ -237,40 +293,100 @@ class Renderer:
             return
 
         hp_ratio = enemy.hp / enemy.max_hp if enemy.max_hp > 0 else 0
+        x = int(enemy.x)
+        y = int(enemy.y)
 
-        # Determine colors based on enemy type
-        primary_color = SPRITE_ENEMY_PRIMARY
-        secondary_color = SPRITE_ENEMY_SECONDARY
+        # Scale factor for sprites
+        SPRITE_SCALE = 2
 
-        if enemy.enemy_type == 'tank':
-            primary_color = COLOR_TANK
-            secondary_color = (80, 80, 120)
-        elif enemy.enemy_type == 'assassin':
-            primary_color = COLOR_ASSASSIN
-            secondary_color = (60, 0, 60)
-        elif enemy.enemy_type == 'boss':
-            primary_color = COLOR_BOSS
-            secondary_color = (160, 40, 160)
+        # Determine which sprite to use based on enemy type and element
+        sprite = None
 
-        # Override with element color if elemental
+        # Check for boss sprites first (elemental bosses)
         if enemy.element == ELEMENT_FIRE:
-            primary_color = COLOR_FIRE_ENEMY
-            secondary_color = (200, 80, 0)
+            sprite = sprite_manager.get_sprite('boss_fire')
         elif enemy.element == ELEMENT_ICE:
-            primary_color = COLOR_ICE_ENEMY
-            secondary_color = (80, 160, 200)
+            sprite = sprite_manager.get_sprite('boss_ice')
         elif enemy.element == ELEMENT_POISON:
-            primary_color = COLOR_POISON_ENEMY
-            secondary_color = (80, 160, 40)
+            sprite = sprite_manager.get_sprite('boss_poison')
+        # Then check enemy type
+        elif enemy.enemy_type == 'tank':
+            sprite = sprite_manager.get_sprite('enemy_tank_idle')
+        elif enemy.enemy_type == 'assassin':
+            sprite = sprite_manager.get_sprite('enemy_assassin_idle')
+        elif enemy.enemy_type == 'ranged':
+            sprite = sprite_manager.get_sprite('enemy_ranged_idle')
+        else:  # melee
+            sprite = sprite_manager.get_sprite('enemy_melee_idle')
 
-        self.draw_sprite(
-            enemy.x, enemy.y,
-            enemy.facing,
-            primary_color, secondary_color,
-            attacking=enemy.is_attacking,
-            hp_ratio=hp_ratio,
-            is_enemy=True
-        )
+        if sprite:
+            # Scale up the sprite
+            scaled_width = sprite.get_width() * SPRITE_SCALE
+            scaled_height = sprite.get_height() * SPRITE_SCALE
+            sprite = pygame.transform.scale(sprite, (scaled_width, scaled_height))
+
+            # Draw shadow
+            shadow_width = scaled_width + 8
+            pygame.draw.ellipse(
+                self.screen,
+                (30, 30, 30),
+                (x - shadow_width // 2, y - 4, shadow_width, 8)
+            )
+
+            # Flip sprite based on facing direction
+            if enemy.facing < 0:
+                sprite = pygame.transform.flip(sprite, True, False)
+
+            # Position sprite (center horizontally, bottom at y)
+            sprite_x = x - sprite.get_width() // 2
+            sprite_y = y - sprite.get_height()
+            self.screen.blit(sprite, (sprite_x, sprite_y))
+
+            # Draw HP bar above sprite
+            bar_width = 30
+            bar_height = 4
+            bar_x = x - bar_width // 2
+            bar_y = sprite_y - 10
+
+            pygame.draw.rect(self.screen, (40, 40, 40),
+                             (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
+            pygame.draw.rect(self.screen, COLOR_RED,
+                             (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(self.screen, COLOR_GREEN,
+                             (bar_x, bar_y, int(bar_width * hp_ratio), bar_height))
+        else:
+            # Fallback to procedural drawing
+            primary_color = SPRITE_ENEMY_PRIMARY
+            secondary_color = SPRITE_ENEMY_SECONDARY
+
+            if enemy.enemy_type == 'tank':
+                primary_color = COLOR_TANK
+                secondary_color = (80, 80, 120)
+            elif enemy.enemy_type == 'assassin':
+                primary_color = COLOR_ASSASSIN
+                secondary_color = (60, 0, 60)
+            elif enemy.enemy_type == 'boss':
+                primary_color = COLOR_BOSS
+                secondary_color = (160, 40, 160)
+
+            if enemy.element == ELEMENT_FIRE:
+                primary_color = COLOR_FIRE_ENEMY
+                secondary_color = (200, 80, 0)
+            elif enemy.element == ELEMENT_ICE:
+                primary_color = COLOR_ICE_ENEMY
+                secondary_color = (80, 160, 200)
+            elif enemy.element == ELEMENT_POISON:
+                primary_color = COLOR_POISON_ENEMY
+                secondary_color = (80, 160, 40)
+
+            self.draw_sprite(
+                enemy.x, enemy.y,
+                enemy.facing,
+                primary_color, secondary_color,
+                attacking=enemy.is_attacking,
+                hp_ratio=hp_ratio,
+                is_enemy=True
+            )
 
         # Determine label and color
         label_color = COLOR_YELLOW
