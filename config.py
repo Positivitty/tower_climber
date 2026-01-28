@@ -2,7 +2,7 @@
 
 # Screen settings
 SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 640
+SCREEN_HEIGHT = 600
 FPS = 60
 
 # Decision tick (0.25 seconds = 15 frames at 60 FPS)

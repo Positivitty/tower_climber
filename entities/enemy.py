@@ -166,11 +166,15 @@ class MeleeEnemy(Enemy):
         if y is None:
             y = GROUND_Y
         super().__init__(x, y, 'melee')
+        self.jump_cooldown = 0  # Frames until enemy can jump again
 
     def update_ai(self, agent):
-        """Chase the player and attack when in range."""
+        """Chase the player and attack when in range. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
+        
+        # Check if player is significantly above us
+        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
 
         if distance <= ATTACK_RANGE:
             # In range - attack
@@ -180,6 +184,15 @@ class MeleeEnemy(Enemy):
         else:
             # Chase the player
             self.vx = direction * self.get_speed()
+            
+            # Jump if player is on higher platform
+            if should_jump:
+                self.vy = -12  # Jump force
+                self.grounded = False
+                self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+
+        # Decrement jump cooldown
+        self.jump_cooldown -= 1
 
 
 class RangedEnemy(Enemy):
@@ -190,9 +203,10 @@ class RangedEnemy(Enemy):
             y = GROUND_Y
         super().__init__(x, y, 'ranged')
         self.projectile_ready = True  # Tracks if we can spawn a projectile
+        self.jump_cooldown = 0  # Frames until enemy can jump again
 
     def update_ai(self, agent):
-        """Maintain preferred distance and shoot when possible."""
+        """Maintain preferred distance and shoot when possible. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
 
@@ -201,6 +215,9 @@ class RangedEnemy(Enemy):
         retreat_speed = ENEMY_RANGED_RETREAT_SPEED
         if self.wounds[BODY_PART_LEGS]:
             retreat_speed *= LEGS_WOUND_SPEED_REDUCTION
+        
+        # Check if player is significantly above us
+        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
 
         # Try to maintain preferred distance
         if distance < self.preferred_distance - 20:
@@ -215,6 +232,15 @@ class RangedEnemy(Enemy):
             if self.can_attack():
                 self.start_attack()
                 self.projectile_ready = True
+        
+        # Jump if player is on higher platform
+        if should_jump:
+            self.vy = -12  # Jump force
+            self.grounded = False
+            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+
+        # Decrement jump cooldown
+        self.jump_cooldown -= 1
 
     def should_spawn_projectile(self) -> bool:
         """Check if a projectile should be spawned this frame."""
@@ -241,6 +267,7 @@ class TankEnemy(Enemy):
 
         # Armor mechanic - first N hits are reduced by 50%
         self.armor_hits_remaining = ENEMY_TANK_ARMOR_HITS
+        self.jump_cooldown = 0  # Frames until enemy can jump again
 
         # Visual
         self.color = COLOR_TANK
@@ -257,9 +284,12 @@ class TankEnemy(Enemy):
         return actual_damage
 
     def update_ai(self, agent):
-        """Slowly advance and attack when in range."""
+        """Slowly advance and attack when in range. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
+        
+        # Check if player is significantly above us
+        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
 
         if distance <= ATTACK_RANGE:
             # In range - attack
@@ -269,6 +299,15 @@ class TankEnemy(Enemy):
         else:
             # Slowly advance
             self.vx = direction * self.get_speed()
+        
+        # Jump if player is on higher platform
+        if should_jump:
+            self.vy = -12  # Jump force
+            self.grounded = False
+            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+
+        # Decrement jump cooldown
+        self.jump_cooldown -= 1
 
 
 class AssassinEnemy(Enemy):
@@ -291,6 +330,7 @@ class AssassinEnemy(Enemy):
         # Behavior state
         self.retreating = False
         self.retreat_timer = 0
+        self.jump_cooldown = 0  # Frames until enemy can jump again
 
         # Visual
         self.color = COLOR_ASSASSIN
@@ -307,9 +347,12 @@ class AssassinEnemy(Enemy):
         return base_damage
 
     def update_ai(self, agent):
-        """Rush in, attack, then retreat briefly."""
+        """Rush in, attack, then retreat briefly. Jump if player is above."""
         distance = self.distance_to(agent)
         direction = self.direction_to(agent)
+        
+        # Check if player is significantly above us
+        should_jump = agent.y < self.y and self.grounded and self.jump_cooldown <= 0
 
         # Handle retreat behavior
         if self.retreating:
@@ -319,6 +362,8 @@ class AssassinEnemy(Enemy):
             else:
                 # Move away from agent
                 self.vx = -direction * self.get_speed() * 0.8
+                # Decrement jump cooldown
+                self.jump_cooldown -= 1
                 return
 
         if distance <= ATTACK_RANGE:
@@ -332,6 +377,15 @@ class AssassinEnemy(Enemy):
         else:
             # Rush toward player
             self.vx = direction * self.get_speed()
+        
+        # Jump if player is on higher platform
+        if should_jump:
+            self.vy = -12  # Jump force
+            self.grounded = False
+            self.jump_cooldown = 30  # Can't jump again for 0.5 seconds
+
+        # Decrement jump cooldown
+        self.jump_cooldown -= 1
 
 
 class BossEnemy(Enemy):

@@ -203,6 +203,8 @@ class TerrainManager:
         self.player_spawn = None  # (x, y) tuple
         self.enemy_spawns = []  # List of (x, y, type) tuples
         self.uses_tile_map = False
+        # Also provide spawn_points dict for compatibility with Moses's game.py
+        self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}
 
     def generate_from_tilemap(self, tile_map: list) -> dict:
         """Parse a tile map and create terrain, returning spawn points.
@@ -251,21 +253,21 @@ class TerrainManager:
 
                 elif tile == 'E':
                     # Generic enemy spawn
-                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'random'))
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y))
                     if block_run_start is not None:
                         self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
                         block_run_start = None
 
                 elif tile == 'M':
                     # Melee enemy spawn
-                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'melee'))
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y))
                     if block_run_start is not None:
                         self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
                         block_run_start = None
 
                 elif tile == 'R':
                     # Ranged enemy spawn
-                    enemy_spawns.append((x + tile_w // 2, GROUND_Y, 'ranged'))
+                    enemy_spawns.append((x + tile_w // 2, GROUND_Y))
                     if block_run_start is not None:
                         self._create_platform_from_run(block_run_start, col_idx, row_idx, tile_w, tile_h, y_offset)
                         block_run_start = None
@@ -288,11 +290,13 @@ class TerrainManager:
 
         self.player_spawn = player_spawn
         self.enemy_spawns = enemy_spawns
-
-        return {
+        # Update spawn_points dict for compatibility
+        self.spawn_points = {
             'player_spawn': player_spawn,
             'enemy_spawns': enemy_spawns
         }
+
+        return self.spawn_points
 
     def _create_platform_from_run(self, start_col: int, end_col: int, row: int, tile_w: int, tile_h: int, y_offset: int = 0):
         """Create a platform from a horizontal run of blocks."""
@@ -322,6 +326,7 @@ class TerrainManager:
             self._generate_boss_terrain(floor_number)
             return
 
+        # Procedural generation for floors 4+
         # Determine complexity based on floor tier
         tier = min(4, floor_number // 3)
 
@@ -511,3 +516,4 @@ class TerrainManager:
         self.player_spawn = None
         self.enemy_spawns = []
         self.uses_tile_map = False
+        self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}
