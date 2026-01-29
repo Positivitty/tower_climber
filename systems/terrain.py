@@ -203,6 +203,9 @@ class TerrainManager:
         self.player_spawn = None  # (x, y) tuple
         self.enemy_spawns = []  # List of (x, y, type) tuples
         self.uses_tile_map = False
+        # Wall boundaries for tile maps
+        self.left_wall = 0
+        self.right_wall = SCREEN_WIDTH
         # Also provide spawn_points dict for compatibility with Moses's game.py
         self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}
 
@@ -221,6 +224,22 @@ class TerrainManager:
 
         tile_w = SCREEN_WIDTH // map_width
         tile_h = SCREEN_HEIGHT // map_height
+
+        # Find wall boundaries (leftmost and rightmost empty space)
+        # Look at a middle row to find where the walls are
+        middle_row = map_height // 2
+        if middle_row < len(tile_map):
+            row = tile_map[middle_row]
+            # Find left wall (first non-B after edge)
+            for i, tile in enumerate(row):
+                if tile != 'B':
+                    self.left_wall = i * tile_w
+                    break
+            # Find right wall (last non-B before edge)
+            for i in range(len(row) - 1, -1, -1):
+                if row[i] != 'B':
+                    self.right_wall = (i + 1) * tile_w
+                    break
 
         # Find the floor row (last row with B's) to calculate Y offset
         # This maps tile Y coordinates to game's GROUND_Y
@@ -516,4 +535,6 @@ class TerrainManager:
         self.player_spawn = None
         self.enemy_spawns = []
         self.uses_tile_map = False
+        self.left_wall = 0
+        self.right_wall = SCREEN_WIDTH
         self.spawn_points = {'player_spawn': None, 'enemy_spawns': []}

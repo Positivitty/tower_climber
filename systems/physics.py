@@ -98,8 +98,16 @@ class PhysicsBody:
                 if hasattr(self, 'current_platform'):
                     self.current_platform = None
 
-        # Keep within screen bounds horizontally
-        self.x = max(self.width // 2, min(SCREEN_WIDTH - self.width // 2, self.x))
+        # Keep within bounds horizontally (use terrain walls if available)
+        left_bound = self.width // 2
+        right_bound = SCREEN_WIDTH - self.width // 2
+
+        if terrain_manager:
+            # Use terrain wall boundaries if set
+            left_bound = max(left_bound, terrain_manager.left_wall + self.width // 2)
+            right_bound = min(right_bound, terrain_manager.right_wall - self.width // 2)
+
+        self.x = max(left_bound, min(right_bound, self.x))
 
     def get_rect(self) -> tuple:
         """Get collision rectangle (left, top, width, height)."""
